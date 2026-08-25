@@ -1,8 +1,248 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #0f172a;
-  color: #f8fafc;
+/* ── Tokens ───────────────────────────────────────────────── */
+:root {
+  --bg-app:       #07091a;
+  --bg-sidebar:   #0b0f20;
+  --bg-card:      #0f1628;
+  --bg-elevated:  #141c35;
+  --bg-hover:     #1a2445;
+  --bg-active:    #1e2d54;
+
+  --border:       rgba(255,255,255,0.06);
+  --border-mid:   rgba(255,255,255,0.10);
+  --border-hi:    rgba(255,255,255,0.16);
+
+  --txt-primary:  #e8edf8;
+  --txt-secondary:#8b9cc8;
+  --txt-muted:    #4a5a80;
+
+  --blue:         #4f8ef7;
+  --blue-soft:    rgba(79,142,247,0.12);
+  --violet:       #7c5cfc;
+  --violet-soft:  rgba(124,92,252,0.12);
+  --emerald:      #10d98a;
+  --emerald-soft: rgba(16,217,138,0.12);
+  --amber:        #f5a623;
+  --amber-soft:   rgba(245,166,35,0.12);
+  --rose:         #f0456a;
+  --rose-soft:    rgba(240,69,106,0.12);
+  --cyan:         #22d3ee;
+  --cyan-soft:    rgba(34,211,238,0.12);
+
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  14px;
+  --radius-xl:  18px;
 }
+
+/* ── Base ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; overflow: hidden; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg-app);
+  color: var(--txt-primary);
+  -webkit-font-smoothing: antialiased;
+  font-size: 13px;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 99px; }
+
+/* ── Typography ───────────────────────────────────────────── */
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ── Gradient utilities ───────────────────────────────────── */
+.gradient-blue-violet {
+  background: linear-gradient(135deg, var(--blue) 0%, var(--violet) 100%);
+}
+.gradient-text {
+  background: linear-gradient(135deg, var(--blue) 0%, var(--violet) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Cards ────────────────────────────────────────────────── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.card-elevated {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+}
+.card-hover {
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+.card-hover:hover {
+  border-color: var(--border-hi);
+  background: var(--bg-hover);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--blue) 0%, var(--violet) 100%);
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(79,142,247,0.3);
+}
+.btn-primary:hover { filter: brightness(1.1); box-shadow: 0 4px 20px rgba(79,142,247,0.4); }
+.btn-ghost {
+  background: transparent;
+  color: var(--txt-secondary);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--bg-hover); color: var(--txt-primary); border-color: var(--border-mid); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Tabs ─────────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  gap: 0;
+}
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--txt-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--txt-secondary); }
+.tab-btn.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+}
+
+/* ── Table ────────────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th {
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--txt-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.data-table td {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--txt-primary);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.data-table tr:hover td { background: var(--bg-hover); }
+
+/* ── Type pills ───────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+}
+.pill-blue    { background: var(--blue-soft);    color: var(--blue); }
+.pill-violet  { background: var(--violet-soft);  color: var(--violet); }
+.pill-emerald { background: var(--emerald-soft); color: var(--emerald); }
+.pill-amber   { background: var(--amber-soft);   color: var(--amber); }
+.pill-rose    { background: var(--rose-soft);    color: var(--rose); }
+.pill-cyan    { background: var(--cyan-soft);    color: var(--cyan); }
+
+/* ── Missing % badge ──────────────────────────────────────── */
+.missing-badge {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ── Skeleton ─────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-elevated) 50%, var(--bg-card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Fade in ──────────────────────────────────────────────── */
+.fade-in { animation: fadeIn 0.25s ease forwards; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Pulse dot ────────────────────────────────────────────── */
+.pulse-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--emerald);
+  animation: pulse-ring 2s ease-out infinite;
+}
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(16,217,138,0.5); }
+  70%  { box-shadow: 0 0 0 7px rgba(16,217,138,0); }
+  100% { box-shadow: 0 0 0 0 rgba(16,217,138,0); }
+}
+
+/* ── Donut chart ──────────────────────────────────────────── */
+.donut-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.donut-label {
+  position: absolute;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  pointer-events: none;
+}
+
+/* ── Copilot ──────────────────────────────────────────────── */
+.copilot-msg-user   { color: #93c5fd; }
+.copilot-msg-ai     { color: #86efac; }
+.copilot-msg-system { color: var(--txt-muted); }
+.copilot-msg-tool   { color: var(--amber); }

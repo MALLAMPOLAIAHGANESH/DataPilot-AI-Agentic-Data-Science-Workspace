@@ -1,248 +1,332 @@
-import React, { useState } from 'react';
-import { uploadData, chatWithData, generateDlModel } from './api';
-import { Upload, Database, Terminal, Send, Cpu, Download, BarChart2, Table } from 'lucide-react';
-import { BarChart, Bar, LineChart, Line, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import React, { useState, useCallback, useEffect } from 'react';
+import type {
+  Dataset, ChartData, ChatMessage, WorkspaceSection,
+  WorkspaceTab, ColumnSchema, ActivityEvent
+} from './types';
+import { uploadDataset, sendChat, runEda } from './services/api';
+
+// Shell & Navigation
+import { Topbar } from './components/shell/Topbar';
+import { NavigationRail } from './components/shell/NavigationRail';
+import { WorkspaceTabs } from './components/shell/WorkspaceTabs';
+
+// Explorer & Modals
+import { ExplorerSidebar } from './components/explorer/ExplorerSidebar';
+import { ColumnDetailsModal } from './components/explorer/ColumnDetailsModal';
+import { DataDictionaryModal } from './components/explorer/DataDictionaryModal';
+
+// Overview, Grid, Charts, EDA, Models
+import { DatasetOverview } from './components/overview/DatasetOverview';
+import { DataPreview } from './components/data-grid/DataPreview';
+import { ChartGrid } from './components/charts/ChartGrid';
+import { EDAPage } from './components/eda/EDAPage';
+import { ModelPage } from './components/models/ModelPage';
+
+// Copilot & Activity
+import { CopilotPanel } from './components/copilot/CopilotPanel';
+import { ExportModal } from './components/export/ExportModal';
+import { HistoryDrawer } from './components/history/HistoryDrawer';
+
+let msgCounter = 0;
+const genId = () => `msg_${Date.now()}_${++msgCounter}`;
 
 export default function App() {
-  const [file, setFile] = useState<File | null>(null);
-  const [schema, setSchema] = useState<any[]>([]);
-  const [preview, setPreview] = useState<any[]>([]);
-  const [chatLog, setChatLog] = useState<{ role: string, text: string }[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  // Application State
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>('workspace');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('preview');
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('unsaved');
 
-  const [targetCol, setTargetCol] = useState('');
-  const [taskType, setTaskType] = useState('Classification');
+  // Dataset State
+  const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [loadingEda, setLoadingEda] = useState<boolean>(false);
+  const [charts, setCharts] = useState<ChartData[]>([]);
 
-  // NEW: Chart State
-  const [activeTab, setActiveTab] = useState<'grid' | 'chart'>('grid');
-  const [chartConfig, setChartConfig] = useState<any | null>(null);
+  // Copilot Messages & History
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [historyEvents, setHistoryEvents] = useState<ActivityEvent[]>([]);
 
-  const handleUpload = async () => {
-    if (!file) return;
+  // Modals
+  const [selectedColumn, setSelectedColumn] = useState<ColumnSchema | null>(null);
+  const [showDictionary, setShowDictionary] = useState<boolean>(false);
+  const [showExport, setShowExport] = useState<boolean>(false);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+
+  const addHistoryEvent = useCallback((type: ActivityEvent['type'], message: string, detail?: string) => {
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setHistoryEvents((prev) => [
+      { id: `hist_${Date.now()}`, timestamp: time, type, message, detail },
+      ...prev,
+    ]);
+  }, []);
+
+  const addMessage = useCallback((role: ChatMessage['role'], text: string, extras: Partial<ChatMessage> = {}) => {
+    const newMsg: ChatMessage = {
+      id: genId(),
+      role,
+      text,
+      timestamp: Date.now(),
+      ...extras,
+    };
+    setMessages((prev) => [...prev, newMsg]);
+  }, []);
+
+  // Handle Dataset Upload
+  const handleUpload = useCallback(async (file: File) => {
     setLoading(true);
-    try {
-      const data = await uploadData(file);
-      setSchema(data.schema_info);
-      setPreview(data.preview);
-      setTargetCol(data.schema_info[0]?.column || '');
-      setChatLog(prev => [...prev, { role: 'system', text: `✅ Dataset loaded: ${data.rows} rows detected.` }]);
-    } catch (error) {
-      setChatLog(prev => [...prev, { role: 'system', text: `❌ Upload failed. Ensure FastAPI is running.` }]);
-    }
-    setLoading(false);
-  };
-
-  const handleChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input) return;
-
-    const userQuery = input;
-    setChatLog(prev => [...prev, { role: 'user', text: userQuery }]);
-    setInput('');
-    setLoading(true);
+    setSaveStatus('saving');
+    addMessage('system', `⚙ Ingesting ${file.name}...`);
+    addHistoryEvent('upload', `Uploaded ${file.name}`);
 
     try {
-      const data = await chatWithData(userQuery);
-      setChatLog(prev => [...prev, { role: 'ai', text: data.response }]);
+      const data = await uploadDataset(file);
+      setDataset(data);
+      setSaveStatus('saved');
+      setMessages([]);
+      setCharts([]);
 
-      // NEW: If AI sends chart data, save it and switch to the Chart tab!
-      if (data.chart_data) {
-        setChartConfig(data.chart_data);
-        setActiveTab('chart');
+      addMessage(
+        'system',
+        `✓ Dataset loaded successfully\n  ${data.rows.toLocaleString()} rows · ${data.columns} columns · ${data.missing_cells.toLocaleString()} missing values`
+      );
+
+      // Auto-trigger EDA charts
+      setLoadingEda(true);
+      try {
+        const edaRes = await runEda(data.dataset_id);
+        if (edaRes.charts?.length) {
+          setCharts(edaRes.charts);
+          addHistoryEvent('chart', `Auto-generated ${edaRes.charts.length} exploratory charts`);
+        }
+      } catch {
+        // Non-critical
       }
-    } catch (error) {
-      setChatLog(prev => [...prev, { role: 'system', text: `❌ Error communicating with AI Engine.` }]);
+      setLoadingEda(false);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Failed to upload dataset';
+      addMessage('system', `❌ ${errMsg} — Check if FastAPI is running on :8000`);
+      setSaveStatus('unsaved');
     }
     setLoading(false);
-  };
+  }, [addMessage, addHistoryEvent]);
 
-  const handleGenerateDL = async () => {
+  // Handle Copilot Chat Queries
+  const handleSendMessage = useCallback(async (query: string) => {
+    if (!dataset) return;
+    addMessage('user', query);
+    addHistoryEvent('chat', query);
     setLoading(true);
-    setChatLog(prev => [...prev, { role: 'system', text: `⚙️ Architecting ${taskType} Neural Network for '${targetCol}'...` }]);
+
     try {
-      const data = await generateDlModel(targetCol, taskType);
-      setChatLog(prev => [...prev, { role: 'ai', text: `✅ Model Architecture Generated:\n\n${data.notebook_code}` }]);
-    } catch (error) {
-      setChatLog(prev => [...prev, { role: 'system', text: `❌ Failed to generate Deep Learning model.` }]);
+      const res = await sendChat(dataset.dataset_id, query);
+
+      if (res.tool_calls?.length) {
+        res.tool_calls.forEach((tool) => {
+          addHistoryEvent('tool', `Executed ${tool}()`);
+        });
+      }
+
+      addMessage('ai', res.response, {
+        chart_data: res.chart_data,
+        table_data: res.table_data,
+        tool_calls: res.tool_calls,
+        error: res.error,
+      });
+
+      if (res.chart_data) {
+        setCharts((prev) => [...prev, res.chart_data!]);
+        addHistoryEvent('chart', `Generated ${res.chart_data.title || 'visualization'}`);
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Unknown AI engine error';
+      addMessage('system', `❌ ${errMsg}`, { error: { code: 'AI_ERROR', message: errMsg } });
     }
     setLoading(false);
-  };
+  }, [dataset, addMessage, addHistoryEvent]);
 
-  // NEW: Helper to render the correct Recharts component
-  const renderChart = () => {
-    if (!chartConfig) return <div className="text-slate-500 flex items-center justify-center h-full">No chart data generated yet.</div>;
-
-    const { type, data, x_key, y_key } = chartConfig;
-
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        {type === 'bar' ? (
-          <BarChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis dataKey={x_key} stroke="#94a3b8" />
-            <YAxis stroke="#94a3b8" />
-            <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc' }} />
-            <Bar dataKey={y_key} fill="#3b82f6" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        ) : type === 'line' ? (
-          <LineChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis dataKey={x_key} stroke="#94a3b8" />
-            <YAxis stroke="#94a3b8" />
-            <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc' }} />
-            <Line type="monotone" dataKey={y_key} stroke="#8b5cf6" strokeWidth={3} />
-          </LineChart>
-        ) : (
-          <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis dataKey={x_key} name={x_key} stroke="#94a3b8" />
-            <YAxis dataKey={y_key} name={y_key} stroke="#94a3b8" />
-            <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#1e293b', border: 'none' }} />
-            <Scatter name="Data" data={data} fill="#10b981" />
-          </ScatterChart>
-        )}
-      </ResponsiveContainer>
-    );
-  };
+  // Run EDA manually
+  const handleRunEda = useCallback(async () => {
+    if (!dataset) return;
+    setLoadingEda(true);
+    try {
+      const res = await runEda(dataset.dataset_id);
+      if (res.charts?.length) {
+        setCharts(res.charts);
+        setActiveTab('charts');
+        addHistoryEvent('chart', `Refreshed ${res.charts.length} exploratory charts`);
+      }
+    } catch {
+      // Non-critical
+    }
+    setLoadingEda(false);
+  }, [dataset, addHistoryEvent]);
 
   return (
-    <div className="flex h-screen bg-slate-900 text-slate-200 font-sans">
+    <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#07091a] text-[#e8edf8] font-sans antialiased select-none">
+      {/* 1. Global Header */}
+      <Topbar
+        dataset={dataset}
+        saveStatus={saveStatus}
+        activeSection={activeSection}
+        onOpenExport={() => setShowExport(true)}
+        onOpenHistory={() => setShowHistory(true)}
+        onSelectSection={(sec) => {
+          setActiveSection(sec);
+          if (sec === 'models') setActiveTab('models');
+          if (sec === 'analytics') setActiveTab('eda');
+        }}
+      />
 
-      <div className="w-80 bg-slate-800 border-r border-slate-700 flex flex-col">
-        <div className="p-4 border-b border-slate-700 flex items-center gap-2 font-bold text-lg text-blue-400">
-          <Cpu size={24} /> DataPilot AI
-        </div>
+      {/* 2. Workspace Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Navigation Rail */}
+        <NavigationRail
+          activeSection={activeSection}
+          onSelectSection={(sec) => {
+            setActiveSection(sec);
+            if (sec === 'models') setActiveTab('models');
+            if (sec === 'analytics') setActiveTab('eda');
+            if (sec === 'datasets' || sec === 'workspace') setActiveTab('preview');
+          }}
+        />
 
-        <div className="p-4 flex-1 overflow-y-auto">
-          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">1. Data Ingestion</h2>
-          <input
-            type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)}
-            className="w-full text-sm mb-2 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-500 file:text-white cursor-pointer"
+        {/* Data Explorer Sidebar */}
+        <ExplorerSidebar
+          dataset={dataset}
+          loading={loading}
+          onUpload={handleUpload}
+          onSelectColumn={(col) => setSelectedColumn(col)}
+          onOpenDataDictionary={() => setShowDictionary(true)}
+        />
+
+        {/* Main Center Workspace */}
+        <main className="flex-1 flex flex-col min-w-0 bg-[#07091a] overflow-hidden">
+          {/* Workspace Tabs Navigation */}
+          <WorkspaceTabs
+            activeTab={activeTab}
+            onTabChange={(tab) => setActiveTab(tab)}
+            hasCharts={charts.length > 0}
           />
-          <button onClick={handleUpload} disabled={!file || loading} className="w-full bg-blue-600 hover:bg-blue-500 text-white p-2 rounded flex items-center justify-center gap-2 transition disabled:opacity-50">
-            <Upload size={16} /> Process Dataset
-          </button>
 
-          {schema.length > 0 && (
-            <div className="mt-6">
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2"><Database size={14} /> Schema Explorer</h2>
-              <div className="space-y-1 max-h-48 overflow-y-auto">
-                {schema.map((col, idx) => (
-                  <div key={idx} className="flex justify-between text-xs bg-slate-700/50 p-2 rounded">
-                    <span className="font-mono text-emerald-300">{col.column}</span>
-                    <span className="text-slate-400">{col.type}</span>
-                  </div>
-                ))}
+          {/* Tab Viewport Content */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Top Metric Cards & Quality Score */}
+            {dataset && <DatasetOverview dataset={dataset} />}
+
+            {/* TAB: Data Preview (Default matches the exact master screenshot layout) */}
+            {activeTab === 'preview' && (
+              <div className="space-y-4 animate-in fade-in duration-150">
+                <DataPreview dataset={dataset} />
+                <ChartGrid
+                  charts={charts}
+                  loadingEda={loadingEda}
+                  onRunEda={handleRunEda}
+                  hasDataset={!!dataset}
+                  onAskAI={handleSendMessage}
+                />
               </div>
-            </div>
-          )}
+            )}
 
-          {schema.length > 0 && (
-            <div className="mt-6 border-t border-slate-700 pt-4">
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">🧠 AI Architect</h2>
-              <label className="text-xs text-slate-400">Target Variable</label>
-              <select value={targetCol} onChange={e => setTargetCol(e.target.value)} className="w-full bg-slate-700 text-sm p-2 rounded mb-2 outline-none">
-                {schema.map((col, idx) => <option key={idx} value={col.column}>{col.column}</option>)}
-              </select>
-
-              <label className="text-xs text-slate-400">Task Type</label>
-              <select value={taskType} onChange={e => setTaskType(e.target.value)} className="w-full bg-slate-700 text-sm p-2 rounded mb-4 outline-none">
-                <option value="Classification">Classification</option>
-                <option value="Regression">Regression</option>
-              </select>
-
-              <button onClick={handleGenerateDL} disabled={loading} className="w-full bg-purple-600 hover:bg-purple-500 text-white p-2 rounded flex items-center justify-center gap-2 transition disabled:opacity-50">
-                <Download size={16} /> Generate PyTorch Model
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* MAIN WORKSPACE */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
-
-        {/* TOP PANE: Dynamic Visualizer */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-900">
-
-          {/* NEW: TABS */}
-          <div className="flex bg-slate-800 border-b border-slate-700">
-            <button onClick={() => setActiveTab('grid')} className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 transition ${activeTab === 'grid' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
-              <Table size={16} /> Live Data Grid
-            </button>
-            <button onClick={() => setActiveTab('chart')} className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 transition ${activeTab === 'chart' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
-              <BarChart2 size={16} /> AI Chart Visualizer
-            </button>
-          </div>
-
-          <div className="flex-1 p-6 overflow-auto">
-            {activeTab === 'grid' ? (
-              preview.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-slate-500 border-2 border-dashed border-slate-700 rounded-xl">
-                  Upload a CSV to preview data
-                </div>
-              ) : (
-                <div className="overflow-x-auto rounded-xl border border-slate-700 shadow-xl">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-800">
-                        {schema.map((col, idx) => (
-                          <th key={idx} className="p-3 border-b border-slate-700 text-sm font-semibold text-slate-300">{col.column}</th>
-                        ))}
+            {/* TAB: Summary Statistics */}
+            {activeTab === 'statistics' && (
+              <div className="bg-[#0f1628] border border-white/[0.07] rounded-2xl p-4 animate-in fade-in duration-150 overflow-x-auto">
+                <h4 className="text-[12px] font-bold text-white font-mono uppercase mb-3">
+                  Summary Statistics by Feature
+                </h4>
+                <table className="w-full text-left text-[11px] font-mono border-collapse">
+                  <thead>
+                    <tr className="border-b border-white/10 text-[#4a5a80] uppercase text-[10px]">
+                      <th className="py-2">Column</th>
+                      <th className="py-2">Type</th>
+                      <th className="py-2">Unique</th>
+                      <th className="py-2">Missing</th>
+                      <th className="py-2">Missing %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {dataset?.schema.map((col) => (
+                      <tr key={col.name} className="hover:bg-white/[0.02]">
+                        <td className="py-2.5 font-bold text-white">{col.name}</td>
+                        <td className="py-2.5 text-[#8b9cc8]">{col.dtype}</td>
+                        <td className="py-2.5 text-[#e8edf8]">{col.unique.toLocaleString()}</td>
+                        <td className="py-2.5 text-[#f5a623]">{col.missing.toLocaleString()}</td>
+                        <td className="py-2.5 text-[#8b9cc8]">{col.missing_percentage}%</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {preview.map((row, rowIdx) => (
-                        <tr key={rowIdx} className="hover:bg-slate-800/50">
-                          {schema.map((col, colIdx) => (
-                            <td key={colIdx} className="p-3 border-b border-slate-700 text-sm text-slate-400">{row[col.column]}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            ) : (
-              // Render the Chart View
-              <div className="h-full bg-slate-800/50 border border-slate-700 rounded-xl p-4 shadow-xl">
-                {renderChart()}
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* TAB: Charts Grid */}
+            {activeTab === 'charts' && (
+              <div className="animate-in fade-in duration-150">
+                <ChartGrid
+                  charts={charts}
+                  loadingEda={loadingEda}
+                  onRunEda={handleRunEda}
+                  hasDataset={!!dataset}
+                  onAskAI={handleSendMessage}
+                />
+              </div>
+            )}
+
+            {/* TAB: Deep EDA */}
+            {(activeTab === 'eda' || activeTab === 'missing' || activeTab === 'types') && (
+              <div className="animate-in fade-in duration-150">
+                <EDAPage dataset={dataset} onAskAI={handleSendMessage} />
+              </div>
+            )}
+
+            {/* TAB: Model Studio */}
+            {activeTab === 'models' && (
+              <div className="animate-in fade-in duration-150">
+                <ModelPage dataset={dataset} onAskAI={handleSendMessage} />
               </div>
             )}
           </div>
-        </div>
-
-        {/* BOTTOM PANE: AI Console */}
-        <div className="h-2/5 bg-[#0a0a0a] border-t border-slate-700 flex flex-col shadow-[0_-10px_30px_rgba(0,0,0,0.5)] z-10">
-          <div className="bg-slate-800 px-4 py-2 text-xs font-mono text-slate-400 flex items-center gap-2 border-b border-slate-700">
-            <Terminal size={14} /> Copilot Terminal
-          </div>
-
-          <div className="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-4">
-            {chatLog.map((msg, idx) => (
-              <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'text-blue-400' : msg.role === 'system' ? 'text-slate-500' : 'text-emerald-400'}`}>
-                <span>{msg.role === 'user' ? '❯' : msg.role === 'system' ? '⚙' : '🤖'}</span>
-                <span className="whitespace-pre-wrap leading-relaxed">{msg.text}</span>
-              </div>
-            ))}
-            {loading && <div className="text-slate-500 animate-pulse flex gap-2"><span>⚙</span> Processing request...</div>}
-          </div>
-
-          <form onSubmit={handleChat} className="p-3 bg-slate-900 border-t border-slate-800 flex gap-2">
-            <span className="text-blue-500 font-bold p-2">~</span>
-            <input
-              type="text" value={input} onChange={e => setInput(e.target.value)}
-              placeholder="Ask Gemini for a chart (e.g., 'Generate a bar chart of average salary by department')"
-              className="flex-1 bg-transparent outline-none font-mono text-slate-200"
-            />
-            <button type="submit" disabled={loading || !input} className="text-slate-500 hover:text-blue-400 transition">
-              <Send size={18} />
-            </button>
-          </form>
-        </div>
-
+        </main>
       </div>
+
+      {/* 3. Global AI Copilot Panel (Docked at bottom) */}
+      <CopilotPanel
+        messages={messages}
+        loading={loading}
+        dataset={dataset}
+        onSendMessage={handleSendMessage}
+      />
+
+      {/* 4. Modals & Drawers */}
+      {selectedColumn && (
+        <ColumnDetailsModal
+          column={selectedColumn}
+          totalRows={dataset?.rows || 0}
+          onClose={() => setSelectedColumn(null)}
+          onAskAI={handleSendMessage}
+        />
+      )}
+
+      {showDictionary && (
+        <DataDictionaryModal
+          dataset={dataset}
+          onClose={() => setShowDictionary(false)}
+        />
+      )}
+
+      {showExport && (
+        <ExportModal
+          dataset={dataset}
+          onClose={() => setShowExport(false)}
+        />
+      )}
+
+      {showHistory && (
+        <HistoryDrawer
+          events={historyEvents}
+          isOpen={showHistory}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   );
 }
