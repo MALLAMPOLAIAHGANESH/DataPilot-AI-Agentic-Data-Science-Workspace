@@ -1,9 +1,14 @@
 """
-api/v1/datasets.py — updated upload response + proper error shapes
+api/v1/datasets.py — complete v1 API router with SQL studio, BigQuery connectors,
+auto-EDA, ML baseline, and executive report generator.
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from ...data   import session_store as store
+from fastapi.responses import HTMLResponse
+from ...data import session_store as store
 from ...agents import analyst_agent
+from ...sql import engine as sql_engine
+from ...connectors import bigquery_connector as bq_connector
+from ...reports import report_generator as rep_gen
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -20,6 +25,15 @@ async def upload_dataset(file: UploadFile = File(...)):
         raise HTTPException(400, detail={"code": "INVALID_FILE", "message": str(e)})
     except Exception as e:
         raise HTTPException(500, detail={"code": "UPLOAD_FAILED", "message": f"Upload failed: {e}"})
+
+
+@router.get("/")
+async def list_datasets():
+    """List all currently loaded datasets in the session."""
+    datasets = []
+    for ds_id in store._STORE.keys():
+        datasets.append(store.get_meta(ds_id))
+    return {"datasets": datasets}
 
 
 @router.get("/{dataset_id}")
@@ -118,6 +132,79 @@ async def run_eda(dataset_id: str):
         charts.append(dt.generate_histogram(dataset_id, numeric_cols[1]))
 
     return {"dataset_id": dataset_id, "charts": [c for c in charts if "error" not in c]}
+
+
+# ── Phase 6: Multi-table SQL & Joins ──────────────────────────────
+
+@router.post("/sql/query")
+async def execute_sql_query(body: dict):
+    """Executes SQL query across all loaded datasets."""
+    query = body.get("query", "").strip()
+    if not query:
+        raise HTTPException(400, detail={"code": "EMPTY_QUERY", "message": "SQL query cannot be empty."})
+    try:
+        return sql_engine.execute_sql(query)
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "SQL_ERROR", "message": str(e)})
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "EXECUTION_FAILED", "message": str(e)})
+
+
+@router.post("/sql/join")
+async def execute_join(body: dict):
+    """Relational visual dataset join."""
+    try:
+        ds1 = body["dataset_id_1"]
+        ds2 = body["dataset_id_2"]
+        left_on = body["left_on"]
+        right_on = body["right_on"]
+        how = body.get("how", "inner")
+        name = body.get("name")
+        return sql_engine.join_datasets(ds1, ds2, left_on, right_on, how, name)
+    except Exception as e:
+        raise HTTPException(400, detail={"code": "JOIN_ERROR", "message": str(e)})
+
+
+# ── Phase 6: BigQuery Connector ───────────────────────────────────
+
+@router.get("/connectors/bigquery/test")
+async def test_bigquery():
+    """Test BigQuery connection and get public datasets."""
+    return bq_connector.test_connection()
+
+
+@router.post("/connectors/bigquery/query")
+async def query_bigquery(body: dict):
+    """Query BigQuery and optionally import result into DataPilot workspace."""
+    query = body.get("query", "").strip()
+    project_id = body.get("project_id")
+    import_as_ds = body.get("import_as_dataset", True)
+    if not query:
+        raise HTTPException(400, detail={"code": "EMPTY_QUERY", "message": "Query cannot be empty."})
+    try:
+        return bq_connector.query_bigquery(query, project_id, import_as_ds)
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "BIGQUERY_ERROR", "message": str(e)})
+
+
+# ── Phase 7: Executive Report Generation ──────────────────────────
+
+@router.get("/{dataset_id}/report")
+async def get_executive_report(dataset_id: str):
+    """Generates an executive intelligence HTML report."""
+    _check(dataset_id)
+    try:
+        return rep_gen.generate_executive_report(dataset_id)
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "REPORT_ERROR", "message": str(e)})
+
+
+@router.get("/{dataset_id}/report/download", response_class=HTMLResponse)
+async def download_executive_report_html(dataset_id: str):
+    """Direct downloadable HTML executive report."""
+    _check(dataset_id)
+    report = rep_gen.generate_executive_report(dataset_id)
+    return HTMLResponse(content=report["html"])
 
 
 def _check(dataset_id: str):

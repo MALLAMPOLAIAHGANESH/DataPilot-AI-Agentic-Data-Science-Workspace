@@ -339,8 +339,8 @@ The Copilot transparently reveals the tool it selected, executes it safely via P
 - [x] Phase 3: Gemini 2.5 Function Calling Agent with Multi-Key Rotation
 - [x] Phase 4: Dynamic EDA Grid & Data Quality Scoring Engine
 - [x] Phase 5: Baseline ML Evaluation & Feature Importance Studio
-- [ ] Phase 6: Multi-table SQL joins & BigQuery Connector Integration
-- [ ] Phase 7: Automated PDF/HTML Executive Report Generation
+- [x] Phase 6: Multi-table SQL Joins & BigQuery Connector Integration
+- [x] Phase 7: Automated PDF/HTML Executive Report Generation
 
 ---
 

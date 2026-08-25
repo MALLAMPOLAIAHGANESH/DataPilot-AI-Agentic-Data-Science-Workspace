@@ -15,12 +15,14 @@ import { ExplorerSidebar } from './components/explorer/ExplorerSidebar';
 import { ColumnDetailsModal } from './components/explorer/ColumnDetailsModal';
 import { DataDictionaryModal } from './components/explorer/DataDictionaryModal';
 
-// Overview, Grid, Charts, EDA, Models
+// Overview, Grid, Charts, EDA, Models, SQL & Reports
 import { DatasetOverview } from './components/overview/DatasetOverview';
 import { DataPreview } from './components/data-grid/DataPreview';
 import { ChartGrid } from './components/charts/ChartGrid';
 import { EDAPage } from './components/eda/EDAPage';
 import { ModelPage } from './components/models/ModelPage';
+import { SQLStudio } from './components/sql/SQLStudio';
+import { ExecutiveReportModal } from './components/reports/ExecutiveReportModal';
 
 // Copilot & Activity
 import { CopilotPanel } from './components/copilot/CopilotPanel';
@@ -51,6 +53,7 @@ export default function App() {
   const [showDictionary, setShowDictionary] = useState<boolean>(false);
   const [showExport, setShowExport] = useState<boolean>(false);
   const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [showReportModal, setShowReportModal] = useState<boolean>(false);
 
   const addHistoryEvent = useCallback((type: ActivityEvent['type'], message: string, detail?: string) => {
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -174,6 +177,7 @@ export default function App() {
           setActiveSection(sec);
           if (sec === 'models') setActiveTab('models');
           if (sec === 'analytics') setActiveTab('eda');
+          if (sec === 'sql') setActiveTab('sql');
         }}
       />
 
@@ -186,6 +190,7 @@ export default function App() {
             setActiveSection(sec);
             if (sec === 'models') setActiveTab('models');
             if (sec === 'analytics') setActiveTab('eda');
+            if (sec === 'sql') setActiveTab('sql');
             if (sec === 'datasets' || sec === 'workspace') setActiveTab('preview');
           }}
         />
@@ -204,7 +209,13 @@ export default function App() {
           {/* Workspace Tabs Navigation */}
           <WorkspaceTabs
             activeTab={activeTab}
-            onTabChange={(tab) => setActiveTab(tab)}
+            onTabChange={(tab) => {
+              if (tab === 'report') {
+                setShowReportModal(true);
+              } else {
+                setActiveTab(tab);
+              }
+            }}
             hasCharts={charts.length > 0}
           />
 
@@ -213,7 +224,7 @@ export default function App() {
             {/* Top Metric Cards & Quality Score */}
             {dataset && <DatasetOverview dataset={dataset} />}
 
-            {/* TAB: Data Preview (Default matches the exact master screenshot layout) */}
+            {/* TAB: Data Preview */}
             {activeTab === 'preview' && (
               <div className="space-y-4 animate-in fade-in duration-150">
                 <DataPreview dataset={dataset} />
@@ -284,6 +295,21 @@ export default function App() {
                 <ModelPage dataset={dataset} onAskAI={handleSendMessage} />
               </div>
             )}
+
+            {/* TAB: Phase 6 SQL Studio & BigQuery */}
+            {activeTab === 'sql' && (
+              <div className="animate-in fade-in duration-150">
+                <SQLStudio
+                  currentDataset={dataset}
+                  onDatasetImported={(newDs) => {
+                    setDataset(newDs);
+                    setActiveTab('preview');
+                    addHistoryEvent('upload', `Created joined dataset: ${newDs.file_name}`);
+                  }}
+                  onAskAI={handleSendMessage}
+                />
+              </div>
+            )}
           </div>
         </main>
       </div>
@@ -317,6 +343,17 @@ export default function App() {
         <ExportModal
           dataset={dataset}
           onClose={() => setShowExport(false)}
+          onOpenReport={() => {
+            setShowExport(false);
+            setShowReportModal(true);
+          }}
+        />
+      )}
+
+      {showReportModal && (
+        <ExecutiveReportModal
+          dataset={dataset}
+          onClose={() => setShowReportModal(false)}
         />
       )}
 

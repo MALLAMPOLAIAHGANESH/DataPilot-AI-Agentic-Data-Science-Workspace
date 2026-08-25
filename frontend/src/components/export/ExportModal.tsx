@@ -1,13 +1,22 @@
 import React from 'react';
-import { X, Download, FileSpreadsheet, FileCode, BarChart2, BookOpen, Layers } from 'lucide-react';
+import {
+  X, Download, FileSpreadsheet, FileCode,
+  FileText, Cloud, CheckCircle2
+} from 'lucide-react';
 import type { Dataset } from '../../types';
+import { getReportDownloadUrl } from '../../services/api';
 
 interface ExportModalProps {
   dataset: Dataset | null;
   onClose: () => void;
+  onOpenReport?: () => void;
 }
 
-export const ExportModal: React.FC<ExportModalProps> = ({ dataset, onClose }) => {
+export const ExportModal: React.FC<ExportModalProps> = ({
+  dataset,
+  onClose,
+  onOpenReport,
+}) => {
   if (!dataset) return null;
 
   const exportCleanedCSV = () => {
@@ -27,6 +36,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({ dataset, onClose }) =>
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadReport = () => {
+    window.open(getReportDownloadUrl(dataset.dataset_id), '_blank');
+  };
+
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-[#0f1628] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl p-6 relative animate-in fade-in zoom-in-95 duration-150">
@@ -43,24 +56,48 @@ export const ExportModal: React.FC<ExportModalProps> = ({ dataset, onClose }) =>
           </div>
           <div>
             <h3 className="text-[16px] font-bold text-white">Export Center</h3>
-            <p className="text-[11px] text-[#8b9cc8]">Export datasets, analysis reports, and code artifacts</p>
+            <p className="text-[11px] text-[#8b9cc8]">
+              {dataset.file_name} • Download data, reports, and code artifacts
+            </p>
           </div>
         </div>
 
         <div className="space-y-2.5">
+          {/* Phase 7: Executive Intelligence HTML Report */}
+          <div
+            onClick={() => {
+              if (onOpenReport) onOpenReport();
+              else handleDownloadReport();
+            }}
+            className="p-3.5 rounded-xl bg-[#0b0f20] border border-white/[0.06] hover:border-[#10d98a]/40 hover:bg-[#10d98a]/5 cursor-pointer flex items-center justify-between transition-all group"
+          >
+            <div className="flex items-center gap-3">
+              <FileText size={18} className="text-[#10d98a]" />
+              <div>
+                <span className="text-[13px] font-semibold text-white group-hover:text-[#10d98a] transition-colors block">
+                  Executive Intelligence Report (HTML / PDF)
+                </span>
+                <span className="text-[10px] text-[#4a5a80]">
+                  Automated scorecard, data health metrics, and strategic recommendations
+                </span>
+              </div>
+            </div>
+            <Download size={15} className="text-[#4a5a80] group-hover:text-[#10d98a]" />
+          </div>
+
           {/* Export Cleaned CSV */}
           <div
             onClick={exportCleanedCSV}
             className="p-3.5 rounded-xl bg-[#0b0f20] border border-white/[0.06] hover:border-[#4f8ef7]/40 hover:bg-[#1e2d54]/40 cursor-pointer flex items-center justify-between transition-all group"
           >
             <div className="flex items-center gap-3">
-              <FileSpreadsheet size={18} className="text-[#10d98a]" />
+              <FileSpreadsheet size={18} className="text-[#4f8ef7]" />
               <div>
                 <span className="text-[13px] font-semibold text-white group-hover:text-[#4f8ef7] transition-colors block">
                   Cleaned Dataset (CSV)
                 </span>
                 <span className="text-[10px] text-[#4a5a80]">
-                  Download processed rows without outliers or missing values
+                  Download processed records without missing values or duplicates
                 </span>
               </div>
             </div>
@@ -84,25 +121,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({ dataset, onClose }) =>
               </div>
             </div>
             <Download size={15} className="text-[#4a5a80] group-hover:text-[#7c5cfc]" />
-          </div>
-
-          {/* Export Schema & Dictionary */}
-          <div
-            onClick={onClose}
-            className="p-3.5 rounded-xl bg-[#0b0f20] border border-white/[0.06] hover:border-white/20 hover:bg-[#1e2d54]/40 cursor-pointer flex items-center justify-between transition-all group"
-          >
-            <div className="flex items-center gap-3">
-              <BookOpen size={18} className="text-[#f5a623]" />
-              <div>
-                <span className="text-[13px] font-semibold text-white group-hover:text-white transition-colors block">
-                  Data Dictionary Report (JSON)
-                </span>
-                <span className="text-[10px] text-[#4a5a80]">
-                  Feature metadata, quality scores, and statistics summary
-                </span>
-              </div>
-            </div>
-            <Download size={15} className="text-[#4a5a80] group-hover:text-white" />
           </div>
         </div>
       </div>

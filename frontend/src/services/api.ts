@@ -3,7 +3,7 @@ import type { Dataset, ChartData, MLMetrics } from '../types';
 
 const http = axios.create({ baseURL: 'http://localhost:8000/api/v1' });
 
-// ── Upload ────────────────────────────────────────────────────────
+// ── Upload & Datasets ─────────────────────────────────────────────
 export const uploadDataset = async (file: File): Promise<Dataset> => {
   const form = new FormData();
   form.append('file', file);
@@ -11,7 +11,11 @@ export const uploadDataset = async (file: File): Promise<Dataset> => {
   return data;
 };
 
-// ── Dataset Information ───────────────────────────────────────────
+export const listDatasets = async (): Promise<{ datasets: any[] }> => {
+  const { data } = await http.get('/datasets/');
+  return data;
+};
+
 export const getDataset = async (id: string): Promise<Dataset> => {
   const { data } = await http.get(`/datasets/${id}`);
   return data;
@@ -61,7 +65,6 @@ export const runBaselineModel = async (
     });
     return data;
   } catch {
-    // Client-side baseline calculation fallback for resilient UX
     return {
       task_type: taskType,
       target_column: targetColumn,
@@ -93,3 +96,57 @@ export const generateNotebook = async (
   });
   return data;
 };
+
+// ── Phase 6: Multi-table SQL & BigQuery ───────────────────────────
+export const executeSQL = async (query: string): Promise<{
+  query: string;
+  columns: string[];
+  rows: Record<string, any>[];
+  total_rows: number;
+  execution_time_ms: number;
+  available_tables: string[];
+}> => {
+  const { data } = await http.post('/datasets/sql/query', { query });
+  return data;
+};
+
+export const executeJoin = async (params: {
+  dataset_id_1: string;
+  dataset_id_2: string;
+  left_on: string;
+  right_on: string;
+  how: 'inner' | 'left' | 'right' | 'outer';
+  name?: string;
+}): Promise<Dataset> => {
+  const { data } = await http.post('/datasets/sql/join', params);
+  return data;
+};
+
+export const testBigQuery = async () => {
+  const { data } = await http.get('/datasets/connectors/bigquery/test');
+  return data;
+};
+
+export const queryBigQuery = async (query: string, projectId?: string, importAsDataset: boolean = true) => {
+  const { data } = await http.post('/datasets/connectors/bigquery/query', {
+    query,
+    project_id: projectId,
+    import_as_dataset: importAsDataset,
+  });
+  return data;
+};
+
+// ── Phase 7: Executive Report Generator ───────────────────────────
+export const getExecutiveReport = async (datasetId: string): Promise<{
+  dataset_id: string;
+  file_name: string;
+  html: string;
+  overall_score: number;
+  generated_at: string;
+}> => {
+  const { data } = await http.get(`/datasets/${datasetId}/report`);
+  return data;
+};
+
+export const getReportDownloadUrl = (datasetId: string) =>
+  `http://localhost:8000/api/v1/datasets/${datasetId}/report/download`;

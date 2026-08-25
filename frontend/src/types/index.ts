@@ -1,6 +1,5 @@
-// ── Navigation & Sections ──────────────────────────────────────────
-export type WorkspaceSection = 'workspace' | 'datasets' | 'analytics' | 'models' | 'copilot' | 'settings';
-export type WorkspaceTab = 'preview' | 'statistics' | 'missing' | 'types' | 'charts' | 'eda' | 'models';
+export type WorkspaceSection = 'workspace' | 'datasets' | 'analytics' | 'models' | 'copilot' | 'sql' | 'settings';
+export type WorkspaceTab = 'preview' | 'statistics' | 'missing' | 'types' | 'charts' | 'eda' | 'models' | 'sql' | 'report';
 
 // ── Dataset Types ──────────────────────────────────────────────────
 export interface ColumnSchema {

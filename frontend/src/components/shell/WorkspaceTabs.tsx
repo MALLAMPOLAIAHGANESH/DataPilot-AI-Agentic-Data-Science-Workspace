@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Table, TrendingUp, AlertTriangle, Layers,
-  BarChart2, Activity, Cpu
+  BarChart2, Activity, Cpu, Terminal, FileText
 } from 'lucide-react';
 import type { WorkspaceTab } from '../../types';
 
@@ -24,6 +24,8 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
     { id: 'charts', label: 'Charts Grid', icon: BarChart2 },
     { id: 'eda', label: 'Deep EDA', icon: Activity },
     { id: 'models', label: 'Model Studio', icon: Cpu },
+    { id: 'sql', label: 'SQL Studio & BigQuery', icon: Terminal },
+    { id: 'report', label: 'Executive Report', icon: FileText },
   ];
 
   return (
@@ -34,7 +36,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
           <button
             key={id}
             onClick={() => onTabChange(id)}
-            className={`flex items-center gap-2 py-2.5 px-3.5 text-[12px] font-medium border-b-2 transition-all whitespace-nowrap ${
+            className={`flex items-center gap-2 py-2.5 px-3 text-[12px] font-medium border-b-2 transition-all whitespace-nowrap ${
               isActive
                 ? 'border-[#4f8ef7] text-[#4f8ef7] font-semibold bg-[#4f8ef7]/5'
                 : 'border-transparent text-[#8b9cc8] hover:text-white hover:bg-white/[0.02]'
@@ -44,6 +46,12 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
             {label}
             {id === 'charts' && hasCharts && (
               <span className="w-1.5 h-1.5 rounded-full bg-[#10d98a]" />
+            )}
+            {id === 'sql' && (
+              <span className="text-[9px] px-1 rounded bg-[#22d3ee]/20 text-[#22d3ee] font-mono">v1.6</span>
+            )}
+            {id === 'report' && (
+              <span className="text-[9px] px-1 rounded bg-[#10d98a]/20 text-[#10d98a] font-mono">v1.7</span>
             )}
           </button>
         );

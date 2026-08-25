@@ -136,6 +136,17 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
             required=["x_col", "y_col"],
         ),
     ),
+    types.FunctionDeclaration(
+        name="execute_sql_query",
+        description="Execute a SQL query across the active dataset table(s) to aggregate, filter, or join data.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING, description="SQL query string (e.g. SELECT pclass, AVG(fare) FROM df1 GROUP BY pclass)"),
+            },
+            required=["query"],
+        ),
+    ),
 ])
 
 # ── Tool dispatcher ───────────────────────────────────────────────
@@ -155,6 +166,7 @@ def _dispatch(name: str, args: dict, dataset_id: str) -> dict:
         "generate_line_chart":   lambda a: dt.generate_line_chart(dataset_id, a.get("x_col", ""), a.get("y_col", "")),
         "generate_histogram":    lambda a: dt.generate_histogram(dataset_id, a.get("column", ""), a.get("bins", 20)),
         "generate_scatter_chart":lambda a: dt.generate_scatter_chart(dataset_id, a.get("x_col", ""), a.get("y_col", "")),
+        "execute_sql_query":     lambda a: __import__("app.sql.engine", fromlist=["execute_sql"]).execute_sql(a.get("query", "")),
     }
     fn = fn_map.get(name)
     if fn is None:
