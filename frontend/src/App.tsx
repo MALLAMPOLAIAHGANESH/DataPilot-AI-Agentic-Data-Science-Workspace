@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import type {
   Dataset, ChartData, ChatMessage, WorkspaceSection,
   WorkspaceTab, ColumnSchema, ActivityEvent
@@ -11,29 +11,42 @@ import { Topbar } from './components/shell/Topbar';
 import { NavigationRail } from './components/shell/NavigationRail';
 import { WorkspaceTabs } from './components/shell/WorkspaceTabs';
 
+// Common UX, Loaders & Toast
+import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { DashboardSkeleton } from './components/common/SkeletonLoader';
+import { ToastProvider, useToast } from './components/common/Toast';
+
 // Explorer & Modals
 import { ExplorerSidebar } from './components/explorer/ExplorerSidebar';
 import { ColumnDetailsModal } from './components/explorer/ColumnDetailsModal';
 import { DataDictionaryModal } from './components/explorer/DataDictionaryModal';
 
-// Overview, Grid, Charts, EDA, Models, SQL & Reports
+// Direct lightweight components
 import { DatasetOverview } from './components/overview/DatasetOverview';
 import { DataPreview } from './components/data-grid/DataPreview';
-import { ChartGrid } from './components/charts/ChartGrid';
-import { EDAPage } from './components/eda/EDAPage';
-import { ModelPage } from './components/models/ModelPage';
-import { SQLStudio } from './components/sql/SQLStudio';
 import { ExecutiveReportModal } from './components/reports/ExecutiveReportModal';
-
-// Copilot & Activity
 import { CopilotPanel } from './components/copilot/CopilotPanel';
 import { ExportModal } from './components/export/ExportModal';
 import { HistoryDrawer } from './components/history/HistoryDrawer';
+
+// Heavy modules loaded on-demand via React.lazy
+const ChartGrid = lazy(() => import('./components/charts/ChartGrid').then((m) => ({ default: m.ChartGrid })));
+const EDAPage = lazy(() => import('./components/eda/EDAPage').then((m) => ({ default: m.EDAPage })));
+const ModelPage = lazy(() => import('./components/models/ModelPage').then((m) => ({ default: m.ModelPage })));
+const SQLStudio = lazy(() => import('./components/sql/SQLStudio').then((m) => ({ default: m.SQLStudio })));
 
 let msgCounter = 0;
 const genId = () => `msg_${Date.now()}_${++msgCounter}`;
 
 export default function App() {
+  return (
+    <ToastProvider>
+      <MainApp />
+    </ToastProvider>
+  );
+}
+
+function MainApp() {
   // Application State
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('workspace');
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('preview');
@@ -328,44 +341,60 @@ export default function App() {
 
             {/* TAB: Charts Grid */}
             {activeTab === 'charts' && (
-              <div className="animate-in fade-in duration-150">
-                <ChartGrid
-                  charts={charts}
-                  loadingEda={loadingEda}
-                  onRunEda={handleRunEda}
-                  hasDataset={!!dataset}
-                  onAskAI={handleSendMessage}
-                />
-              </div>
+              <ErrorBoundary fallbackTitle="Charts Loading Error">
+                <Suspense fallback={<DashboardSkeleton />}>
+                  <div className="animate-in fade-in duration-150">
+                    <ChartGrid
+                      charts={charts}
+                      loadingEda={loadingEda}
+                      onRunEda={handleRunEda}
+                      hasDataset={!!dataset}
+                      onAskAI={handleSendMessage}
+                    />
+                  </div>
+                </Suspense>
+              </ErrorBoundary>
             )}
 
             {/* TAB: Deep EDA */}
             {(activeTab === 'eda' || activeTab === 'missing' || activeTab === 'types') && (
-              <div className="animate-in fade-in duration-150">
-                <EDAPage dataset={dataset} onAskAI={handleSendMessage} />
-              </div>
+              <ErrorBoundary fallbackTitle="EDA Dashboard Error">
+                <Suspense fallback={<DashboardSkeleton />}>
+                  <div className="animate-in fade-in duration-150">
+                    <EDAPage dataset={dataset} onAskAI={handleSendMessage} />
+                  </div>
+                </Suspense>
+              </ErrorBoundary>
             )}
 
             {/* TAB: Model Studio */}
             {activeTab === 'models' && (
-              <div className="animate-in fade-in duration-150">
-                <ModelPage dataset={dataset} onAskAI={handleSendMessage} />
-              </div>
+              <ErrorBoundary fallbackTitle="Model Studio Error">
+                <Suspense fallback={<DashboardSkeleton />}>
+                  <div className="animate-in fade-in duration-150">
+                    <ModelPage dataset={dataset} onAskAI={handleSendMessage} />
+                  </div>
+                </Suspense>
+              </ErrorBoundary>
             )}
 
-            {/* TAB: Phase 6 SQL Studio & BigQuery */}
+            {/* TAB: SQL Studio & BigQuery */}
             {activeTab === 'sql' && (
-              <div className="animate-in fade-in duration-150">
-                <SQLStudio
-                  currentDataset={dataset}
-                  onDatasetImported={(newDs) => {
-                    setDataset(newDs);
-                    setActiveTab('preview');
-                    addHistoryEvent('upload', `Created joined dataset: ${newDs.file_name}`);
-                  }}
-                  onAskAI={handleSendMessage}
-                />
-              </div>
+              <ErrorBoundary fallbackTitle="SQL Studio Error">
+                <Suspense fallback={<DashboardSkeleton />}>
+                  <div className="animate-in fade-in duration-150">
+                    <SQLStudio
+                      currentDataset={dataset}
+                      onDatasetImported={(newDs) => {
+                        setDataset(newDs);
+                        setActiveTab('preview');
+                        addHistoryEvent('upload', `Created joined dataset: ${newDs.file_name}`);
+                      }}
+                      onAskAI={handleSendMessage}
+                    />
+                  </div>
+                </Suspense>
+              </ErrorBoundary>
             )}
           </div>
         </main>

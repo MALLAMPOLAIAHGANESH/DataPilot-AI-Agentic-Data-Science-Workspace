@@ -4,6 +4,7 @@ auto-EDA, ML baseline, and executive report generator.
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse
+from ...data.processing import process_upload
 from ...data import session_store as store
 from ...agents import analyst_agent
 from ...sql import engine as sql_engine
@@ -15,16 +16,26 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 @router.post("/upload")
 async def upload_dataset(file: UploadFile = File(...)):
-    """Upload CSV/XLSX/JSON. Returns full dashboard payload."""
+    """Upload CSV/XLSX/JSON. Accepts uploaded file, processes bytes, saves dataset and returns schema metadata."""
     try:
-        contents   = await file.read()
-        dataset_id = store.load_file(contents, file.filename or "upload")
+        contents = await file.read()
+        filename = file.filename or "upload.csv"
+        df = process_upload(contents, filename)
+        dataset_id = store.load_file(contents, filename)
         analyst_agent.reset_memory(dataset_id)
-        return store.get_full_upload_response(dataset_id)
+        
+        response_payload = store.get_full_upload_response(dataset_id)
+        response_payload.update({
+            "message": "Upload successful",
+            "filename": filename,
+            "columns": df.columns.tolist(),
+            "rows": len(df),
+        })
+        return response_payload
     except ValueError as e:
-        raise HTTPException(400, detail={"code": "INVALID_FILE", "message": str(e)})
+        raise HTTPException(status_code=400, detail={"code": "INVALID_FILE", "message": str(e)})
     except Exception as e:
-        raise HTTPException(500, detail={"code": "UPLOAD_FAILED", "message": f"Upload failed: {e}"})
+        raise HTTPException(status_code=400, detail={"code": "UPLOAD_FAILED", "message": f"Upload failed: {e}"})
 
 
 @router.get("/")
@@ -61,10 +72,107 @@ async def get_schema(dataset_id: str):
     return {"dataset_id": dataset_id, "schema": store.get_schema(dataset_id)}
 
 
+from pydantic import BaseModel
+from ...data.quality import generate_data_profile
+from ...data.automl import run_automl
+
+
+@router.get("/profile")
+async def get_dataset_profile(session_id: str = "default_session"):
+    """Returns the automated EDA profile and health metrics."""
+    try:
+        profile = generate_data_profile(session_id)
+        if "error" in profile:
+            raise HTTPException(status_code=404, detail=profile["error"])
+        return profile
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate profile: {str(e)}")
+
+
+class TrainRequest(BaseModel):
+    target_column: str
+    session_id: str = "default_session"
+
+
+@router.post("/train")
+async def train_models(req: TrainRequest):
+    result = run_automl(req.target_column, req.session_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+from ...data.eda_engine import generate_smart_eda
+
+
+@router.get("/eda")
+async def get_smart_eda(session_id: str = "default_session"):
+    """Returns metadata-driven visualizations, heatmaps, maps, and statistical summaries."""
+    try:
+        eda_data = generate_smart_eda(session_id)
+        if "error" in eda_data:
+            raise HTTPException(status_code=404, detail=eda_data["error"])
+        return eda_data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"EDA generation failed: {str(e)}")
+
+
+from ...sql.engine import execute_workspace_query
+
+
+class QueryRequest(BaseModel):
+    query: str
+    source: str = "local"  # 'local' or 'bigquery'
+    session_id: str = "default_session"
+
+
+@router.post("/query")
+async def run_query(req: QueryRequest):
+    result = execute_workspace_query(req.query, req.source, req.session_id)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "SQL execution failed"))
+    return result
+
+
+from fastapi import Response
+from app.reports.notebook_generator import generate_jupyter_notebook
+from app.reports.report_generator import generate_html_report
+
+
+@router.get("/export/notebook")
+async def export_notebook(session_id: str = "default_session"):
+    notebook_content = generate_jupyter_notebook(session_id)
+    return Response(
+        content=notebook_content,
+        media_type="application/x-ipynb+json",
+        headers={"Content-Disposition": "attachment; filename=datapilot_analysis.ipynb"}
+    )
+
+
+@router.get("/export/report")
+async def export_html_report(session_id: str = "default_session"):
+    html_content = generate_html_report(session_id)
+    return Response(
+        content=html_content,
+        media_type="text/html",
+        headers={"Content-Disposition": "attachment; filename=executive_report.html"}
+    )
+
+
 @router.get("/{dataset_id}/profile")
 async def get_profile(dataset_id: str):
     """Full statistical profile for Summary Statistics tab."""
     _check(dataset_id)
+    try:
+        profile = generate_data_profile(dataset_id)
+        if "error" not in profile:
+            return {"dataset_id": dataset_id, **profile}
+    except Exception:
+        pass
     import pandas as pd
     df = store.get_df(dataset_id)
     numeric = df.select_dtypes(include="number")
@@ -88,12 +196,12 @@ async def chat(dataset_id: str, body: dict):
         [f"- {col}: {str(df[col].dtype)}" for col in df.columns]
     )
 
-    from ...llm import orchestrator
+    from ...agents import analyst_agent
     try:
-        reply = orchestrator.chat_with_data(
-            user_message=query,
-            schema_context=schema_str,
-        )
+        res = analyst_agent.chat(dataset_id=dataset_id, user_query=query)
+        reply = res.get("response", "Analysis completed.")
+        chart_data = res.get("chart_data")
+        tool_calls = res.get("tool_calls", [])
     except Exception as e:
         error_msg = str(e)
         user_msg = f"AI Error: {error_msg}"
@@ -111,18 +219,18 @@ async def chat(dataset_id: str, body: dict):
             "error":      {"code": "AGENT_ERROR", "message": error_msg[:300]},
         }
 
-    # Refresh preview after any tool may have mutated DATA_STORE["df"]
+    # Refresh preview after any tool may have mutated the dataset
     from ...data import processing
     try:
         new_schema, new_preview, new_rows = processing.get_schema_and_preview()
     except Exception:
-        new_schema, new_preview, new_rows = [], [], 0
+        new_schema, new_preview, new_rows = store.get_schema(dataset_id), [], len(df)
 
     return {
         "response":   reply,
         "reply":      reply,
-        "chart_data": None,
-        "tool_calls": [],
+        "chart_data": chart_data,
+        "tool_calls": tool_calls,
         "rows":       new_rows,
         "schema_info": new_schema,
         "preview":    new_preview,

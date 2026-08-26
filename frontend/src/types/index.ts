@@ -92,6 +92,14 @@ export interface ActivityEvent {
 }
 
 // ── ML Models ──────────────────────────────────────────────────────
+export interface ModelLeaderboardItem {
+  model: string;
+  metric_1: string;
+  val_1: number | string;
+  metric_2: string;
+  val_2: number | string;
+}
+
 export interface MLMetrics {
   task_type: 'classification' | 'regression';
   target_column: string;
@@ -102,6 +110,7 @@ export interface MLMetrics {
   r2_score?: number;
   feature_importances?: { feature: string; importance: number }[];
   model_name: string;
+  leaderboard?: ModelLeaderboardItem[];
 }
 
 // ── Filters & Grid ─────────────────────────────────────────────────

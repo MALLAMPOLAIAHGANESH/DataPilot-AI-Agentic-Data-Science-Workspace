@@ -5,7 +5,86 @@ skewness, kurtosis, and a composite health score.
 """
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List
+from app.data.session_store import get_dataset
+
+
+def generate_data_profile(session_id: str = "default_session") -> Dict[str, Any]:
+    """Generates a lightweight automated data profile for EDA and quality assessment."""
+    df = get_dataset(session_id)
+    if df is None:
+        return {"error": "No active dataset loaded."}
+
+    total_rows = len(df)
+    total_cols = len(df.columns)
+    if total_rows == 0 or total_cols == 0:
+        return {
+            "overview": {
+                "total_rows": 0,
+                "total_columns": 0,
+                "missing_cells": 0,
+                "missing_percentage": 0.0,
+                "duplicate_rows": 0,
+                "duplicate_percentage": 0.0,
+                "health_score": 0.0,
+            },
+            "columns": {},
+        }
+
+    # 1. Dataset-level Quality Metrics
+    missing_cells = df.isnull().sum().sum()
+    total_cells = total_rows * total_cols
+    duplicate_rows = df.duplicated().sum()
+
+    # Calculate a simple 0-100 "Data Health Score"
+    missing_penalty = (missing_cells / total_cells) * 100 if total_cells > 0 else 0
+    duplicate_penalty = (duplicate_rows / total_rows) * 100 if total_rows > 0 else 0
+    health_score = max(0, 100 - (missing_penalty + duplicate_penalty))
+
+    # 2. Column-level Profiling
+    columns_profile = {}
+    for col in df.columns:
+        col_data = df[col]
+        col_type = str(col_data.dtype)
+        missing_count = int(col_data.isnull().sum())
+        missing_pct = round((missing_count / total_rows) * 100, 2) if total_rows > 0 else 0
+        unique_count = int(col_data.nunique(dropna=False))
+
+        col_stats = {
+            "type": col_type,
+            "missing_count": missing_count,
+            "missing_percentage": missing_pct,
+            "unique_values": unique_count,
+        }
+
+        # Numeric specific statistics
+        if pd.api.types.is_numeric_dtype(col_data):
+            clean_col = col_data.dropna()
+            mean_val = float(clean_col.mean()) if not clean_col.empty and pd.notnull(clean_col.mean()) else None
+            std_val = float(clean_col.std()) if len(clean_col) > 1 and pd.notnull(clean_col.std()) else None
+            min_val = float(clean_col.min()) if not clean_col.empty and pd.notnull(clean_col.min()) else None
+            max_val = float(clean_col.max()) if not clean_col.empty and pd.notnull(clean_col.max()) else None
+            col_stats.update({
+                "mean": round(mean_val, 4) if mean_val is not None else None,
+                "std": round(std_val, 4) if std_val is not None else None,
+                "min": round(min_val, 4) if min_val is not None else None,
+                "max": round(max_val, 4) if max_val is not None else None,
+                "zeros": int((clean_col == 0).sum()),
+            })
+
+        columns_profile[col] = col_stats
+
+    return {
+        "overview": {
+            "total_rows": total_rows,
+            "total_columns": total_cols,
+            "missing_cells": int(missing_cells),
+            "missing_percentage": round((missing_cells / total_cells) * 100, 2) if total_cells > 0 else 0,
+            "duplicate_rows": int(duplicate_rows),
+            "duplicate_percentage": round((duplicate_rows / total_rows) * 100, 2) if total_rows > 0 else 0,
+            "health_score": round(health_score, 1),
+        },
+        "columns": columns_profile,
+    }
 
 
 def calculate_data_quality(df: pd.DataFrame) -> Dict[str, Any]:

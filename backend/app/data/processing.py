@@ -43,14 +43,69 @@ DATA_STORE = _DataStoreFacade()
 
 # ── Core helpers ──────────────────────────────────────────────────
 
+def process_upload(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """
+    Reads raw uploaded bytes into a pandas DataFrame safely.
+
+    Catches specific pandas parsing errors and converts them to
+    clean, human-readable ValueErrors so the API can surface them
+    directly to the frontend instead of leaking internal tracebacks.
+    """
+    lower_name = (filename or "").lower()
+
+    if lower_name.endswith(".csv"):
+        try:
+            df = pd.read_csv(io.BytesIO(file_bytes))
+            if df.empty:
+                raise ValueError("The uploaded CSV file is empty.")
+            return df
+        except pd.errors.EmptyDataError:
+            raise ValueError("The uploaded CSV file contains no data or columns.")
+        except pd.errors.ParserError:
+            raise ValueError(
+                "The file is malformed. Please check the CSV formatting."
+            )
+        except ValueError:
+            raise  # re-raise clean ValueErrors we raised ourselves
+        except Exception as e:
+            raise ValueError(f"An unexpected error occurred parsing the file: {e}")
+
+    elif lower_name.endswith((".xlsx", ".xls")):
+        try:
+            df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+            if df.empty:
+                raise ValueError("The uploaded Excel file is empty.")
+            return df
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Could not read Excel file: {e}")
+
+    elif lower_name.endswith(".json"):
+        try:
+            df = pd.read_json(io.BytesIO(file_bytes))
+            if df.empty:
+                raise ValueError("The uploaded JSON file is empty.")
+            return df
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Could not read JSON file: {e}")
+
+    # No recognised extension
+    raise ValueError(
+        "Unsupported file format. Please upload a .csv, .xlsx, .xls, or .json file."
+    )
+
+
 def get_active_dataframe() -> pd.DataFrame | None:
     """Return the current session's active DataFrame."""
     return get_current_session().get("df")
 
 
-def load_dataframe(file_contents: bytes) -> None:
-    """Read raw CSV bytes and store in the current session."""
-    df = pd.read_csv(io.BytesIO(file_contents))
+def load_dataframe(file_contents: bytes, filename: str = "dataset.csv") -> None:
+    """Read raw bytes and store DataFrame in the current session."""
+    df = process_upload(file_contents, filename)
     get_current_session()["df"] = df
 
 

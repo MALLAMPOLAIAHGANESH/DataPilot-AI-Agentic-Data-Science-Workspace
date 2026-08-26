@@ -22,13 +22,27 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+import os
+import shutil
+
 # ── Session Registry ──────────────────────────────────────────────
+SESSION_DIR = os.getenv("SESSION_STORAGE_DIR", "./workspace_sessions")
+os.makedirs(SESSION_DIR, exist_ok=True)
+
+
+def _get_file_path(session_id: str) -> str:
+    return os.path.join(SESSION_DIR, f"{session_id}.parquet")
+
+
 # Maps session_id → {
 #   "_STORE": {dataset_id → {df, filename, schema, quality}},
 #   "df":     pd.DataFrame | None,   ← active df for tool-calling
 #   "memory": list,                  ← Gemini chat history
 # }
 ACTIVE_SESSIONS: dict[str, dict[str, Any]] = {}
+
+# In-memory store: maps session_id to a pandas DataFrame
+_ACTIVE_DATASETS: dict[str, pd.DataFrame] = {}
 
 # Automatically tracks which session owns the current request thread
 current_session_id: ContextVar[str] = ContextVar("current_session_id", default="default")
@@ -115,7 +129,114 @@ def _session_store() -> dict[str, dict]:
 
 # ── Public API — identical signatures to the old module ───────────
 
-def load_file(file_bytes: bytes, filename: str) -> str:
+def save_dataset(
+    arg1: Any = None,
+    arg2: Any = None,
+    filename: str = "dataset.csv",
+    session_id: str | None = None,
+    df: pd.DataFrame | None = None,
+) -> str:
+    """
+    Saves the DataFrame to the active session.
+    Supports:
+      - save_dataset(session_id, df)
+      - save_dataset(df, session_id)
+      - save_dataset(df, filename=...)
+    """
+    target_df: pd.DataFrame
+    target_sid: str
+
+    if isinstance(arg1, str) and isinstance(arg2, pd.DataFrame):
+        target_sid = arg1
+        target_df = arg2
+    elif isinstance(arg1, pd.DataFrame):
+        target_df = arg1
+        target_sid = arg2 if isinstance(arg2, str) else (session_id or current_session_id.get())
+    elif df is not None:
+        target_df = df
+        target_sid = session_id or (arg1 if isinstance(arg1, str) else current_session_id.get())
+    else:
+        target_df = pd.DataFrame()
+        target_sid = session_id or current_session_id.get()
+
+    if target_sid:
+        _ACTIVE_DATASETS[target_sid] = target_df
+
+    dataset_id = _new_id()
+    if target_sid and target_sid in ACTIVE_SESSIONS:
+        session = ACTIVE_SESSIONS[target_sid]
+    else:
+        session = get_current_session()
+
+    session["_STORE"][dataset_id] = {
+        "df":       target_df,
+        "filename": filename,
+        "schema":   _build_schema(target_df),
+        "quality":  _quality_score(target_df),
+    }
+    # Also mirror into the session's active "df" so agentic tools work immediately
+    session["df"] = target_df
+
+    if target_df is not None and isinstance(target_df, pd.DataFrame) and not target_df.empty:
+        try:
+            filepath = _get_file_path(target_sid)
+            target_df.to_parquet(filepath, index=False)
+        except Exception:
+            pass
+
+    return dataset_id
+
+
+def get_dataset(session_id: str = "default_session") -> pd.DataFrame | None:
+    """Retrieves the DataFrame from memory or disk for the given session."""
+    if session_id in _ACTIVE_DATASETS and _ACTIVE_DATASETS[session_id] is not None:
+        return _ACTIVE_DATASETS[session_id]
+    if session_id in ACTIVE_SESSIONS and ACTIVE_SESSIONS[session_id].get("df") is not None:
+        return ACTIVE_SESSIONS[session_id]["df"]
+
+    # Check persistent disk storage
+    filepath = _get_file_path(session_id)
+    if os.path.exists(filepath):
+        try:
+            df = pd.read_parquet(filepath)
+            _ACTIVE_DATASETS[session_id] = df
+            sess = ACTIVE_SESSIONS.setdefault(session_id, {"_STORE": {}, "df": df, "memory": []})
+            sess["df"] = df
+            return df
+        except Exception:
+            pass
+
+    # Check current session context
+    curr = get_current_session()
+    if curr.get("df") is not None:
+        return curr["df"]
+    if curr.get("_STORE"):
+        latest = next(reversed(curr["_STORE"]))
+        return curr["_STORE"][latest]["df"]
+    # Fallback to any active dataset in memory
+    if _ACTIVE_DATASETS:
+        return next(reversed(list(_ACTIVE_DATASETS.values())))
+    for s in ACTIVE_SESSIONS.values():
+        if s.get("df") is not None:
+            return s["df"]
+    return None
+
+
+def clear_session(session_id: str) -> None:
+    """Removes the dataset from memory and persistent disk."""
+    if session_id in _ACTIVE_DATASETS:
+        del _ACTIVE_DATASETS[session_id]
+    if session_id in ACTIVE_SESSIONS:
+        del ACTIVE_SESSIONS[session_id]
+    filepath = _get_file_path(session_id)
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
+
+
+def load_file(file_bytes: bytes, filename: str, session_id: str | None = None) -> str:
     """Parse bytes, store the DataFrame in the current session, return dataset_id."""
     ext = filename.rsplit(".", 1)[-1].lower()
     if ext == "csv":
@@ -127,17 +248,7 @@ def load_file(file_bytes: bytes, filename: str) -> str:
     else:
         raise ValueError(f"Unsupported file type: .{ext}")
 
-    dataset_id = _new_id()
-    session = get_current_session()
-    session["_STORE"][dataset_id] = {
-        "df":       df,
-        "filename": filename,
-        "schema":   _build_schema(df),
-        "quality":  _quality_score(df),
-    }
-    # Also mirror into the session's active "df" so agentic tools work immediately
-    session["df"] = df
-    return dataset_id
+    return save_dataset(df, session_id=session_id, filename=filename)
 
 
 def get_df(dataset_id: str) -> pd.DataFrame:

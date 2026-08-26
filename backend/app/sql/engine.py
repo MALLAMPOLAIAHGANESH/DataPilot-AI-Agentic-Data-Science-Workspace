@@ -1,97 +1,49 @@
 """
-sql/engine.py
-In-memory SQL engine supporting multi-table queries and visual joins across all stored datasets.
-Uses an in-memory SQLite connection dynamically populated with DataFrames.
+sql/engine.py — Unified SQL Routing Engine for DataPilot-AI.
+
+Routes queries seamlessly between local DuckDB (in-memory analytics over session DataFrames)
+and remote Google Cloud BigQuery client.
 """
 from __future__ import annotations
 
-import sqlite3
+import duckdb
 import pandas as pd
-import time
-import re
-from typing import Any
-from ..data import session_store as store
+from typing import Any, Dict
+
+from app.connectors.bigquery_connector import bq_client
+from app.data.session_store import get_dataset
+from app.data import session_store as store
 
 
-def execute_sql(query: str) -> dict[str, Any]:
-    """
-    Executes a SQL query across all loaded datasets.
-    Tables are registered under:
-      - Cleaned file_name (e.g. 'titanic', 'movies')
-      - dataset_id (e.g. 'ds_123')
-      - 'df1', 'df2', etc. (by order of ingestion)
-    """
-    start_time = time.time()
-    
-    # Read-only security check: disallow mutating or file system statements
-    forbidden = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "ATTACH", "DETACH", "PRAGMA"]
-    clean_query = query.strip()
-    query_upper = clean_query.upper()
-    for word in forbidden:
-        if re.search(r'\b' + word + r'\b', query_upper):
-            raise ValueError(f"Security Alert: '{word}' statements are not permitted in analytical SQL mode.")
-
-    conn = sqlite3.connect(":memory:")
-
-    # Register all datasets in store as SQLite tables
-    table_index = 1
-    table_mapping = {}
-    
-    for ds_id, entry in store._STORE.items():
-        df = entry.get("df")
-        if df is None:
-            continue
-
-        # Register by sanitized filename
-        base_name = re.sub(r'[^a-zA-Z0-9_]', '_', entry.get("filename", "").rsplit(".", 1)[0]).lower()
-        if not base_name or base_name[0].isdigit():
-            base_name = f"table_{base_name}"
-            
-        try:
-            df.to_sql(base_name, conn, index=False, if_exists="replace")
-            table_mapping[base_name] = ds_id
-        except Exception:
-            pass
-
-        # Register as table_1, table_2 / df1, df2, and 'df' for primary
-        alias = f"df{table_index}"
-        try:
-            df.to_sql(alias, conn, index=False, if_exists="replace")
-            table_mapping[alias] = ds_id
-            if table_index == 1 or "df" not in table_mapping:
-                df.to_sql("df", conn, index=False, if_exists="replace")
-                table_mapping["df"] = ds_id
-        except Exception:
-            pass
-        
-        # Register by ds_id
-        try:
-            df.to_sql(ds_id, conn, index=False, if_exists="replace")
-            table_mapping[ds_id] = ds_id
-        except Exception:
-            pass
-
-        table_index += 1
-
+def execute_workspace_query(query: str, source: str = "local", session_id: str = "default_session") -> dict:
+    """Routes the query to either local DuckDB or live BigQuery."""
     try:
-        result_df = pd.read_sql_query(clean_query, conn)
-        execution_time_ms = round((time.time() - start_time) * 1000, 2)
-
-        # Replace NaN with None for JSON serialization
-        sample_rows = result_df.head(100).where(result_df.notna(), other=None).to_dict(orient="records")
+        if source == "bigquery":
+            df_result = bq_client.execute_query(query)
+        else:
+            # Local execution using DuckDB against the active session DataFrame
+            df = get_dataset(session_id)
+            if df is None:
+                raise ValueError("No active local dataset. Please upload a CSV first.")
+            df_result = duckdb.query(query).to_df()
 
         return {
-            "query": clean_query,
-            "columns": list(result_df.columns),
-            "rows": sample_rows,
-            "total_rows": len(result_df),
-            "execution_time_ms": execution_time_ms,
-            "available_tables": list(table_mapping.keys()),
+            "status": "success",
+            "columns": df_result.columns.tolist(),
+            "row_count": len(df_result),
+            # Send top 100 rows to the UI to prevent browser memory crashes
+            "data": df_result.head(100).to_dict(orient="records")
         }
     except Exception as e:
-        raise ValueError(f"SQL Execution Error: {str(e)}")
-    finally:
-        conn.close()
+        return {"status": "error", "message": str(e)}
+
+
+def execute_sql(query: str, session_id: str = "default_session") -> dict[str, Any]:
+    """Shim for tool calls and Copilot interactions."""
+    res = execute_workspace_query(query, source="local", session_id=session_id)
+    if res.get("status") == "error":
+        raise ValueError(res.get("message", "SQL execution failed"))
+    return res
 
 
 def join_datasets(
