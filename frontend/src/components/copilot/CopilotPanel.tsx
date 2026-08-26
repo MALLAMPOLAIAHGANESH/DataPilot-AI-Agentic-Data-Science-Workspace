@@ -8,9 +8,9 @@ import type { CopilotMessageResponse } from '../../services/api';
 import type { Dataset, ChatMessage as GlobalChatMessage } from '../../types';
 import { ChartRenderer } from '../charts/ChartRenderer';
 
-interface LocalChatMessage {
+export interface LocalChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'ai' | 'system';
+  role: 'user' | 'ai' | 'system' | 'assistant' | 'tool' | string;
   content?: string;
   text?: string;
   toolUsed?: string | null;
