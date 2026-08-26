@@ -3,6 +3,8 @@ data/quality.py — Statistical health engine for DataPilot-AI.
 Computes per-column distribution metrics, IQR outlier boundaries,
 skewness, kurtosis, and a composite health score.
 """
+from __future__ import annotations
+from typing import Dict, Any, List, Optional
 import numpy as np
 import pandas as pd
 from app.data.session_store import get_dataset
