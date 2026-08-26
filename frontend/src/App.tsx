@@ -3,7 +3,7 @@ import type {
   Dataset, ChartData, ChatMessage, WorkspaceSection,
   WorkspaceTab, ColumnSchema, ActivityEvent
 } from './types';
-import { uploadDataset, sendChat, runEda, downloadJupyterNotebook } from './services/api';
+import { uploadDataset, sendChat, runEda, downloadJupyterNotebook, API_BASE } from './services/api';
 import { BookOpen } from 'lucide-react';
 
 // Shell & Navigation
@@ -123,7 +123,7 @@ function MainApp() {
       setLoadingEda(false);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Failed to upload dataset';
-      addMessage('system', `❌ ${errMsg} — Check if FastAPI is running on :8000`);
+      addMessage('system', `❌ ${errMsg} — Check connection to backend (${API_BASE})`);
       setSaveStatus('unsaved');
     }
     setLoading(false);

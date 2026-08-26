@@ -53,7 +53,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ── CORS Configuration for Production Security ────────────────────
 ALLOWED_ORIGINS_RAW = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:80,http://localhost:3000"
+    "https://datapilot-workspace.vercel.app,http://localhost:5173,http://127.0.0.1:5173,http://localhost:80,http://localhost:3000"
 )
 
 if ALLOWED_ORIGINS_RAW.strip() == "*":
@@ -96,38 +96,45 @@ app.include_router(copilot_router, prefix="/api/v1")
 
 
 @app.post("/api/v1/upload", tags=["datasets"])
+@app.post("/api/v1/datasets/upload", tags=["datasets"])
 async def upload_dataset_alias(file: datasets_router.UploadFile = datasets_router.File(...)):
     return await datasets_router.upload_dataset(file)
 
 
 @app.get("/api/v1/profile", tags=["datasets"])
+@app.get("/api/v1/datasets/profile", tags=["datasets"])
 async def get_dataset_profile_alias(session_id: str = "default_session"):
     return await datasets_router.get_dataset_profile(session_id)
 
 
 @app.post("/api/v1/train", tags=["automl"])
+@app.post("/api/v1/datasets/train", tags=["automl"])
 async def train_models_alias(req: datasets_router.TrainRequest):
     return await datasets_router.train_models(req)
 
 
 @app.get("/api/v1/eda", tags=["eda"])
+@app.get("/api/v1/datasets/eda", tags=["eda"])
 async def get_smart_eda_alias(session_id: str = "default_session"):
     return await datasets_router.get_smart_eda(session_id)
 
 
 @app.post("/api/v1/query", tags=["sql"])
+@app.post("/api/v1/datasets/query", tags=["sql"])
 async def run_query_alias(req: datasets_router.QueryRequest):
     return await datasets_router.run_query(req)
 
 
 @app.get("/export/notebook", tags=["export"])
 @app.get("/api/v1/export/notebook", tags=["export"])
+@app.get("/api/v1/datasets/export/notebook", tags=["export"])
 async def export_jupyter_notebook_alias(session_id: str = "default_session"):
     return await datasets_router.export_notebook(session_id)
 
 
 @app.get("/export/report", tags=["export"])
 @app.get("/api/v1/export/report", tags=["export"])
+@app.get("/api/v1/datasets/export/report", tags=["export"])
 async def export_html_report_alias(session_id: str = "default_session"):
     return await datasets_router.export_html_report(session_id)
 
