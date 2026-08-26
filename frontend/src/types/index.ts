@@ -36,6 +36,12 @@ export interface Dataset {
   quality: QualityScore;
   preview: Record<string, unknown>[];
   column_names: string[];
+  eda_profile?: {
+    rows: number;
+    missing_pct: number;
+    numeric_cols: number;
+    categorical_cols: number;
+  };
 }
 
 // ── Chart Types ────────────────────────────────────────────────────

@@ -1,7 +1,22 @@
 import axios from 'axios';
 import type { Dataset, ChartData, MLMetrics } from '../types';
 
-const http = axios.create({ baseURL: 'http://localhost:8000/api/v1' });
+// ── Multi-User Session Isolation ──────────────────────────────────
+// Generate a unique UUID for this browser tab the first time it opens.
+// sessionStorage keeps it alive across refreshes but resets when the
+// tab is closed — giving every student their own isolated sandbox.
+let sessionId = sessionStorage.getItem('datapilot_session_id');
+if (!sessionId) {
+  sessionId = crypto.randomUUID();
+  sessionStorage.setItem('datapilot_session_id', sessionId);
+}
+
+// Attach the session ID to every outgoing request automatically
+const http = axios.create({
+  baseURL: 'http://localhost:8000/api/v1',
+  headers: { 'X-Session-ID': sessionId },
+});
+
 
 // ── Upload & Datasets ─────────────────────────────────────────────
 export const uploadDataset = async (file: File): Promise<Dataset> => {
@@ -59,31 +74,44 @@ export const runBaselineModel = async (
   taskType: 'classification' | 'regression'
 ): Promise<MLMetrics> => {
   try {
-    const { data } = await http.post(`/datasets/${id}/train`, {
+    const { data } = await http.post('/datasets/automl/train', {
+      dataset_id: id,
       target_column: targetColumn,
-      task_type: taskType,
     });
-    return data;
+    // The backend returns flat metric keys at the top level
+    return {
+      task_type: (data.task_type || taskType) as 'classification' | 'regression',
+      target_column: data.target_column || targetColumn,
+      model_name: data.model_name || 'Random Forest Baseline',
+      accuracy:   data.accuracy,
+      f1_score:   data.f1_score,
+      roc_auc:    data.roc_auc,
+      rmse:       data.rmse,
+      r2_score:   data.r2_score,
+      feature_importances: data.feature_importances ?? [],
+    };
   } catch {
+    // Fallback mock so the UI is never broken by a missing API key / cold start
     return {
       task_type: taskType,
       target_column: targetColumn,
-      accuracy: taskType === 'classification' ? 0.842 : undefined,
-      f1_score: taskType === 'classification' ? 0.817 : undefined,
-      roc_auc: taskType === 'classification' ? 0.884 : undefined,
-      rmse: taskType === 'regression' ? 4.12 : undefined,
-      r2_score: taskType === 'regression' ? 0.865 : undefined,
-      model_name: 'Random Forest Baseline',
+      accuracy:  taskType === 'classification' ? 0.842 : undefined,
+      f1_score:  taskType === 'classification' ? 0.817 : undefined,
+      roc_auc:   taskType === 'classification' ? 0.884 : undefined,
+      rmse:      taskType === 'regression'     ? 4.12  : undefined,
+      r2_score:  taskType === 'regression'     ? 0.865 : undefined,
+      model_name: 'Random Forest Baseline (mock)',
       feature_importances: [
-        { feature: 'Sex', importance: 0.32 },
-        { feature: 'Fare', importance: 0.26 },
-        { feature: 'Pclass', importance: 0.18 },
-        { feature: 'Age', importance: 0.14 },
+        { feature: 'Sex',   importance: 0.32 },
+        { feature: 'Fare',  importance: 0.26 },
+        { feature: 'Pclass',importance: 0.18 },
+        { feature: 'Age',   importance: 0.14 },
         { feature: 'SibSp', importance: 0.10 },
       ],
     };
   }
 };
+
 
 export const generateNotebook = async (
   id: string,
@@ -150,3 +178,20 @@ export const getExecutiveReport = async (datasetId: string): Promise<{
 
 export const getReportDownloadUrl = (datasetId: string) =>
   `http://localhost:8000/api/v1/datasets/${datasetId}/report/download`;
+
+export const downloadJupyterNotebook = async () => {
+  const response = await http.get('/export/notebook', {
+    responseType: 'blob',
+  });
+
+  const blob = new Blob([response.data], { type: 'application/x-ipynb+json' });
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = downloadUrl;
+  link.setAttribute('download', 'datapilot_analysis.ipynb');
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(downloadUrl);
+};
+

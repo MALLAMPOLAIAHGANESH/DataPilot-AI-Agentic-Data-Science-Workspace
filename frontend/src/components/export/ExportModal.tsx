@@ -4,7 +4,7 @@ import {
   FileText, Cloud, CheckCircle2
 } from 'lucide-react';
 import type { Dataset } from '../../types';
-import { getReportDownloadUrl } from '../../services/api';
+import { getReportDownloadUrl, downloadJupyterNotebook } from '../../services/api';
 
 interface ExportModalProps {
   dataset: Dataset | null;
@@ -104,9 +104,16 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <Download size={15} className="text-[#4a5a80] group-hover:text-[#4f8ef7]" />
           </div>
 
-          {/* Export PyTorch Notebook */}
+          {/* Export Jupyter / PyTorch Notebook */}
           <div
-            onClick={onClose}
+            onClick={async () => {
+              try {
+                await downloadJupyterNotebook();
+              } catch (e) {
+                console.error(e);
+              }
+              onClose();
+            }}
             className="p-3.5 rounded-xl bg-[#0b0f20] border border-white/[0.06] hover:border-[#7c5cfc]/40 hover:bg-[#1e2d54]/40 cursor-pointer flex items-center justify-between transition-all group"
           >
             <div className="flex items-center gap-3">

@@ -13,6 +13,7 @@ interface ExplorerSidebarProps {
   onUpload: (file: File) => void;
   onSelectColumn?: (col: ColumnSchema) => void;
   onOpenDataDictionary: () => void;
+  onExportNotebook?: () => void;
 }
 
 export function dtypePill(dtype: string) {
@@ -30,6 +31,7 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
   onUpload,
   onSelectColumn,
   onOpenDataDictionary,
+  onExportNotebook,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
@@ -208,6 +210,15 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
               <BookOpen size={12} />
               View Data Dictionary
             </button>
+
+            {onExportNotebook && (
+              <button
+                onClick={onExportNotebook}
+                className="w-full mt-2 bg-slate-700 hover:bg-slate-600 text-slate-200 p-2 rounded-lg flex items-center justify-center gap-2 text-xs font-medium transition shadow-md"
+              >
+                <BookOpen size={14} /> Export Notebook (.ipynb)
+              </button>
+            )}
           </div>
         )}
       </div>

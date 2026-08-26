@@ -3,7 +3,8 @@ import type {
   Dataset, ChartData, ChatMessage, WorkspaceSection,
   WorkspaceTab, ColumnSchema, ActivityEvent
 } from './types';
-import { uploadDataset, sendChat, runEda } from './services/api';
+import { uploadDataset, sendChat, runEda, downloadJupyterNotebook } from './services/api';
+import { BookOpen } from 'lucide-react';
 
 // Shell & Navigation
 import { Topbar } from './components/shell/Topbar';
@@ -40,6 +41,7 @@ export default function App() {
 
   // Dataset State
   const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [edaProfile, setEdaProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingEda, setLoadingEda] = useState<boolean>(false);
   const [charts, setCharts] = useState<ChartData[]>([]);
@@ -84,6 +86,7 @@ export default function App() {
     try {
       const data = await uploadDataset(file);
       setDataset(data);
+      setEdaProfile(data.eda_profile);
       setSaveStatus('saved');
       setMessages([]);
       setCharts([]);
@@ -129,12 +132,30 @@ export default function App() {
         });
       }
 
-      addMessage('ai', res.response, {
+      // Support both old `response` field and new `reply` field
+      const replyText = (res as any).reply || res.response || 'Done.';
+
+      addMessage('ai', replyText, {
         chart_data: res.chart_data,
         table_data: res.table_data,
         tool_calls: res.tool_calls,
         error: res.error,
       });
+
+      // If the tool mutated the data, refresh the dataset state so the grid updates
+      const freshRes = res as any;
+      if (freshRes.preview && freshRes.rows !== undefined) {
+        setDataset((prev) =>
+          prev
+            ? {
+                ...prev,
+                preview: freshRes.preview,
+                rows: freshRes.rows,
+                schema: freshRes.schema_info ?? prev.schema,
+              }
+            : prev
+        );
+      }
 
       if (res.chart_data) {
         setCharts((prev) => [...prev, res.chart_data!]);
@@ -146,6 +167,7 @@ export default function App() {
     }
     setLoading(false);
   }, [dataset, addMessage, addHistoryEvent]);
+
 
   // Run EDA manually
   const handleRunEda = useCallback(async () => {
@@ -163,6 +185,17 @@ export default function App() {
     }
     setLoadingEda(false);
   }, [dataset, addHistoryEvent]);
+
+  // Export Jupyter Notebook (.ipynb)
+  const handleExportNotebook = useCallback(async () => {
+    try {
+      await downloadJupyterNotebook();
+      addMessage('system', '📥 Jupyter Notebook (.ipynb) downloaded successfully.');
+      addHistoryEvent('upload', 'Exported session as Jupyter Notebook (.ipynb)');
+    } catch (err) {
+      addMessage('system', '⚠️ Failed to export Jupyter notebook.');
+    }
+  }, [addMessage, addHistoryEvent]);
 
   return (
     <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#07091a] text-[#e8edf8] font-sans antialiased select-none">
@@ -202,6 +235,7 @@ export default function App() {
           onUpload={handleUpload}
           onSelectColumn={(col) => setSelectedColumn(col)}
           onOpenDataDictionary={() => setShowDictionary(true)}
+          onExportNotebook={handleExportNotebook}
         />
 
         {/* Main Center Workspace */}
@@ -240,32 +274,55 @@ export default function App() {
 
             {/* TAB: Summary Statistics */}
             {activeTab === 'statistics' && (
-              <div className="bg-[#0f1628] border border-white/[0.07] rounded-2xl p-4 animate-in fade-in duration-150 overflow-x-auto">
-                <h4 className="text-[12px] font-bold text-white font-mono uppercase mb-3">
-                  Summary Statistics by Feature
-                </h4>
-                <table className="w-full text-left text-[11px] font-mono border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/10 text-[#4a5a80] uppercase text-[10px]">
-                      <th className="py-2">Column</th>
-                      <th className="py-2">Type</th>
-                      <th className="py-2">Unique</th>
-                      <th className="py-2">Missing</th>
-                      <th className="py-2">Missing %</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.04]">
-                    {dataset?.schema.map((col) => (
-                      <tr key={col.name} className="hover:bg-white/[0.02]">
-                        <td className="py-2.5 font-bold text-white">{col.name}</td>
-                        <td className="py-2.5 text-[#8b9cc8]">{col.dtype}</td>
-                        <td className="py-2.5 text-[#e8edf8]">{col.unique.toLocaleString()}</td>
-                        <td className="py-2.5 text-[#f5a623]">{col.missing.toLocaleString()}</td>
-                        <td className="py-2.5 text-[#8b9cc8]">{col.missing_percentage}%</td>
+              <div className="space-y-4 animate-in fade-in duration-150">
+                {edaProfile && (
+                  <div className="grid grid-cols-4 gap-4 mb-6">
+                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                      <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Total Rows</div>
+                      <div className="text-2xl font-bold text-blue-400">{edaProfile.rows.toLocaleString()}</div>
+                    </div>
+                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                      <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Missing Data</div>
+                      <div className="text-2xl font-bold text-rose-400">{edaProfile.missing_pct}%</div>
+                    </div>
+                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                      <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Numeric Cols</div>
+                      <div className="text-2xl font-bold text-emerald-400">{edaProfile.numeric_cols}</div>
+                    </div>
+                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                      <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Text Cols</div>
+                      <div className="text-2xl font-bold text-purple-400">{edaProfile.categorical_cols}</div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-[#0f1628] border border-white/[0.07] rounded-2xl p-4 overflow-x-auto">
+                  <h4 className="text-[12px] font-bold text-white font-mono uppercase mb-3">
+                    Summary Statistics by Feature
+                  </h4>
+                  <table className="w-full text-left text-[11px] font-mono border-collapse">
+                    <thead>
+                      <tr className="border-b border-white/10 text-[#4a5a80] uppercase text-[10px]">
+                        <th className="py-2">Column</th>
+                        <th className="py-2">Type</th>
+                        <th className="py-2">Unique</th>
+                        <th className="py-2">Missing</th>
+                        <th className="py-2">Missing %</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {dataset?.schema.map((col) => (
+                        <tr key={col.name} className="hover:bg-white/[0.02]">
+                          <td className="py-2.5 font-bold text-white">{col.name}</td>
+                          <td className="py-2.5 text-[#8b9cc8]">{col.dtype}</td>
+                          <td className="py-2.5 text-[#e8edf8]">{col.unique.toLocaleString()}</td>
+                          <td className="py-2.5 text-[#f5a623]">{col.missing.toLocaleString()}</td>
+                          <td className="py-2.5 text-[#8b9cc8]">{col.missing_percentage}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 

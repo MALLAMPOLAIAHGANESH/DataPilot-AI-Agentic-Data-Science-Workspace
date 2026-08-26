@@ -194,7 +194,7 @@ def reset_memory(dataset_id: str) -> None:
 
 # ── Main entry point ──────────────────────────────────────────────
 
-CANDIDATE_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+CANDIDATE_MODELS = ["gemini-3.7-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
 
 def chat(dataset_id: str, user_query: str) -> dict:

@@ -10,11 +10,11 @@ class ColumnSchema(BaseModel):
     type: str
 
 class UploadResponse(BaseModel):
-    """What the backend returns to React after a successful CSV upload"""
     message: str
     rows: int
-    schema_info: List[ColumnSchema]
-    preview: List[Dict[str, Any]]  # Holds the first 5 rows for the UI grid
+    schema_info: List[Dict[str, Any]]
+    preview: List[Dict[str, Any]]
+    eda_profile: Optional[Dict[str, Any]] = None  # NEW: Holds our automated insights
 
 # ==========================================
 # 2. Copilot Chat Schemas

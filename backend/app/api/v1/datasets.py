@@ -78,28 +78,55 @@ async def get_profile(dataset_id: str):
 @router.post("/{dataset_id}/chat")
 async def chat(dataset_id: str, body: dict):
     _check(dataset_id)
-    query = body.get("query", "").strip()
+    query = body.get("query", body.get("message", "")).strip()
     if not query:
         raise HTTPException(400, detail={"code": "EMPTY_QUERY", "message": "Query cannot be empty."})
+
+    # Build schema context from the authoritative session_store
+    df = store.get_df(dataset_id)
+    schema_str = "\n".join(
+        [f"- {col}: {str(df[col].dtype)}" for col in df.columns]
+    )
+
+    from ...llm import orchestrator
     try:
-        result = analyst_agent.chat(dataset_id, query)
-        return result
+        reply = orchestrator.chat_with_data(
+            user_message=query,
+            schema_context=schema_str,
+        )
     except Exception as e:
         error_msg = str(e)
         user_msg = f"AI Error: {error_msg}"
-        if "API_KEY_INVALID" in error_msg or "API key not valid" in error_msg or "INVALID_ARGUMENT" in error_msg:
-            user_msg = "Invalid Gemini API Key. Please provide a valid key from Google AI Studio (starting with AIzaSy...)."
+        if "API_KEY_INVALID" in error_msg or "API key not valid" in error_msg:
+            user_msg = "Invalid Gemini API Key. Please provide a valid key from Google AI Studio."
         elif "quota" in error_msg.lower() or "RESOURCE_EXHAUSTED" in error_msg:
-            user_msg = "Gemini API quota exceeded on your key(s). Please add another key or wait a minute."
+            user_msg = "Gemini API quota exceeded. Please wait a moment and retry."
         elif "No Gemini API keys" in error_msg:
             user_msg = "No GEMINI_API_KEY found in backend/.env."
-
         return {
             "response":   user_msg,
+            "reply":      user_msg,
             "chart_data": None,
             "tool_calls": [],
             "error":      {"code": "AGENT_ERROR", "message": error_msg[:300]},
         }
+
+    # Refresh preview after any tool may have mutated DATA_STORE["df"]
+    from ...data import processing
+    try:
+        new_schema, new_preview, new_rows = processing.get_schema_and_preview()
+    except Exception:
+        new_schema, new_preview, new_rows = [], [], 0
+
+    return {
+        "response":   reply,
+        "reply":      reply,
+        "chart_data": None,
+        "tool_calls": [],
+        "rows":       new_rows,
+        "schema_info": new_schema,
+        "preview":    new_preview,
+    }
 
 
 @router.post("/{dataset_id}/eda")
@@ -207,6 +234,68 @@ async def download_executive_report_html(dataset_id: str):
     return HTMLResponse(content=report["html"])
 
 
+@router.get("/export/notebook")
+async def export_jupyter_notebook():
+    """Generates and downloads a .ipynb file from the active session."""
+    import json
+    from fastapi.responses import Response
+    from ...data import processing
+    from ...llm import orchestrator
+    from ...reports.notebook_generator import generate_notebook_dict
+
+    try:
+        schema, _, _ = processing.get_schema_and_preview()
+    except Exception:
+        # Fallback to session store if processing DATA_STORE is empty
+        schema = []
+        if store._STORE:
+            first_id = next(iter(store._STORE.keys()))
+            schema = store.get_schema(first_id)
+
+    session_history = orchestrator.SESSION_MEMORY
+    notebook_dict = generate_notebook_dict(session_history, schema)
+    notebook_json = json.dumps(notebook_dict, indent=2)
+
+    return Response(
+        content=notebook_json,
+        media_type="application/x-ipynb+json",
+        headers={
+            "Content-Disposition": "attachment; filename=datapilot_analysis.ipynb"
+        }
+    )
+
+
 def _check(dataset_id: str):
     if not store.exists(dataset_id):
         raise HTTPException(404, detail={"code": "NOT_FOUND", "message": f"Dataset '{dataset_id}' not found."})
+
+
+# ── Phase 8: Data Quality Audit ───────────────────────────────────
+
+@router.get("/quality/report")
+async def get_data_quality_report():
+    """
+    Returns a detailed statistical health audit for the active dataset.
+    Includes per-column outlier counts, skewness, IQR bounds, and an
+    overall health score (0–100).
+    """
+    from ...data.quality import calculate_data_quality
+    from ...data import processing
+
+    # Prefer the most-recently-uploaded dataset from session_store
+    df = None
+    if store._STORE:
+        latest_id = next(reversed(store._STORE))
+        df = store.get_df(latest_id)
+    else:
+        # Fall back to the processing DATA_STORE (tool-calling path)
+        df = processing.DATA_STORE.get("df")
+
+    if df is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "NO_DATASET", "message": "No active dataset loaded."},
+        )
+
+    report = calculate_data_quality(df)
+    return {"status": "success", "report": report}

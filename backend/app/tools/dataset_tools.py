@@ -1,159 +1,130 @@
-"""
-tools/dataset_tools.py
-Deterministic, exec()-free functions that Gemini calls via tool-calling.
-Each function receives a dataset_id and operates on the stored DataFrame.
-"""
-from __future__ import annotations
-
-import pandas as pd
 import numpy as np
-from ..data import session_store as store
+import pandas as pd
+from typing import List
+from app.data.processing import DATA_STORE
 
+def filter_rows(query_expression: str) -> str:
+    """
+    Filters dataset rows based on a standard pandas query string.
+    Example query expressions: "rating > 8.0", "Age >= 18 and City == 'New York'".
+    
+    Args:
+        query_expression: The boolean condition string to evaluate.
+    """
+    df = DATA_STORE.get("df")
+    if df is None:
+        return "Error: No dataset currently loaded."
+    
+    try:
+        initial_count = len(df)
+        filtered_df = df.query(query_expression)
+        DATA_STORE["df"] = filtered_df
+        dropped = initial_count - len(filtered_df)
+        return f"Successfully applied filter '{query_expression}'. Retained {len(filtered_df)} rows ({dropped} rows removed)."
+    except Exception as e:
+        return f"Error executing query expression: {str(e)}"
 
-# ── Summary ───────────────────────────────────────────────────────
-
-def get_dataset_summary(dataset_id: str) -> dict:
-    """Return high-level metadata: rows, columns, missing values, dtypes."""
-    return store.get_meta(dataset_id)
-
-
-def get_column_statistics(dataset_id: str, column: str) -> dict:
-    """Return descriptive statistics for a single column."""
-    df  = store.get_df(dataset_id)
+def remove_outliers(column: str, method: str = "iqr", threshold: float = 1.5) -> str:
+    """
+    Detects and removes statistical outliers from a numeric column using IQR or Z-score.
+    
+    Args:
+        column: Name of the numeric column to clean.
+        method: Outlier detection algorithm - either 'iqr' (Interquartile Range) or 'zscore'.
+        threshold: Sensitivity multiplier (default 1.5 for IQR, 3.0 for zscore).
+    """
+    df = DATA_STORE.get("df")
+    if df is None:
+        return "Error: No dataset loaded."
     if column not in df.columns:
-        return {"error": f"Column '{column}' not found."}
+        return f"Error: Column '{column}' does not exist."
+    if not np.issubdtype(df[column].dtype, np.number):
+        return f"Error: Column '{column}' is not numeric."
 
-    series = df[column]
-    result: dict = {
-        "column":   column,
-        "dtype":    str(series.dtype),
-        "count":    int(series.count()),
-        "missing":  int(series.isna().sum()),
-    }
+    initial_count = len(df)
+    series = df[column].dropna()
 
-    if pd.api.types.is_numeric_dtype(series):
-        desc = series.describe()
-        result.update({
-            "mean":   round(float(desc["mean"]), 4),
-            "std":    round(float(desc["std"]),  4),
-            "min":    float(desc["min"]),
-            "25%":    float(desc["25%"]),
-            "median": float(desc["50%"]),
-            "75%":    float(desc["75%"]),
-            "max":    float(desc["max"]),
-        })
+    if method == "iqr":
+        q1 = series.quantile(0.25)
+        q3 = series.quantile(0.75)
+        iqr = q3 - q1
+        lower_bound = q1 - (threshold * iqr)
+        upper_bound = q3 + (threshold * iqr)
+        DATA_STORE["df"] = df[(df[column] >= lower_bound) & (df[column] <= upper_bound)]
+    elif method == "zscore":
+        mean = series.mean()
+        std = series.std()
+        if std == 0:
+            return f"Column '{column}' has zero standard deviation."
+        z_scores = (df[column] - mean) / std
+        DATA_STORE["df"] = df[z_scores.abs() <= threshold]
     else:
-        top = series.value_counts()
-        result.update({
-            "unique":    int(series.nunique()),
-            "top_value": str(top.index[0]) if len(top) else None,
-            "top_count": int(top.iloc[0])  if len(top) else 0,
-        })
-    return result
+        return f"Error: Unsupported method '{method}'. Choose 'iqr' or 'zscore'."
 
+    removed = initial_count - len(DATA_STORE["df"])
+    return f"Removed {removed} outliers from '{column}' using {method.upper()} method."
 
-def get_missing_values(dataset_id: str) -> dict:
-    """Return missing value counts and percentages per column."""
-    df = store.get_df(dataset_id)
-    total = len(df)
-    result = {}
-    for col in df.columns:
-        n = int(df[col].isna().sum())
-        result[col] = {"count": n, "pct": round(n / total * 100, 2)}
-    return result
-
-
-def calculate_correlation(dataset_id: str) -> dict:
-    """Return Pearson correlation matrix for all numeric columns."""
-    df      = store.get_df(dataset_id)
-    numeric = df.select_dtypes(include="number")
-    if numeric.empty:
-        return {"error": "No numeric columns found."}
-    corr = numeric.corr().round(4)
-    return corr.to_dict()
-
-
-def get_value_counts(dataset_id: str, column: str, top_n: int = 10) -> dict:
-    """Return top-N value counts for a categorical column."""
-    df = store.get_df(dataset_id)
-    if column not in df.columns:
-        return {"error": f"Column '{column}' not found."}
-    counts = df[column].value_counts().head(top_n)
-    return {str(k): int(v) for k, v in counts.items()}
-
-
-# ── Cleaning ──────────────────────────────────────────────────────
-
-def fill_missing_values(dataset_id: str, column: str, strategy: str = "mean") -> dict:
+def drop_columns(columns: List[str]) -> str:
     """
-    Fill nulls in a column.
-    strategy: 'mean' | 'median' | 'mode' | 'drop'
+    Permanently deletes one or more columns from the active dataset.
+    
+    Args:
+        columns: List of column names to remove.
     """
-    df = store.get_df(dataset_id).copy()
+    df = DATA_STORE.get("df")
+    if df is None:
+        return "Error: No dataset loaded."
+
+    existing_cols = [c for c in columns if c in df.columns]
+    if not existing_cols:
+        return "Error: None of the specified columns were found in the dataset."
+
+    DATA_STORE["df"] = df.drop(columns=existing_cols)
+    return f"Successfully dropped columns: {', '.join(existing_cols)}."
+
+def impute_missing(column: str, strategy: str = "median", fill_value: str = "0") -> str:
+    """
+    Fills missing values in a specified column using a mathematical or constant strategy.
+    
+    Args:
+        column: Column name to impute.
+        strategy: 'mean', 'median', 'mode', or 'constant'.
+        fill_value: Used only when strategy is 'constant'.
+    """
+    df = DATA_STORE.get("df")
+    if df is None:
+        return "Error: No dataset loaded."
     if column not in df.columns:
-        return {"error": f"Column '{column}' not found."}
+        return f"Error: Column '{column}' not found."
 
-    before = int(df[column].isna().sum())
+    missing_before = df[column].isna().sum()
+    if missing_before == 0:
+        return f"Column '{column}' contains no missing values."
 
-    if strategy == "drop":
-        df = df.dropna(subset=[column])
-    elif strategy == "mean" and pd.api.types.is_numeric_dtype(df[column]):
+    if strategy == "mean" and np.issubdtype(df[column].dtype, np.number):
         df[column] = df[column].fillna(df[column].mean())
-    elif strategy == "median" and pd.api.types.is_numeric_dtype(df[column]):
+    elif strategy == "median" and np.issubdtype(df[column].dtype, np.number):
         df[column] = df[column].fillna(df[column].median())
     elif strategy == "mode":
         df[column] = df[column].fillna(df[column].mode()[0])
+    elif strategy == "constant":
+        df[column] = df[column].fillna(fill_value)
     else:
-        return {"error": f"Strategy '{strategy}' not applicable to column '{column}'."}
+        return f"Error: Strategy '{strategy}' is invalid or incompatible with data type {df[column].dtype}."
 
-    store.update_df(dataset_id, df)
-    return {"column": column, "strategy": strategy, "nulls_before": before, "nulls_after": int(df[column].isna().sum())}
-
-
-def remove_duplicates(dataset_id: str) -> dict:
-    """Drop exact duplicate rows."""
-    df     = store.get_df(dataset_id)
-    before = len(df)
-    df     = df.drop_duplicates()
-    store.update_df(dataset_id, df)
-    return {"rows_before": before, "rows_after": len(df), "removed": before - len(df)}
+    DATA_STORE["df"] = df
+    return f"Imputed {missing_before} missing entries in '{column}' using strategy '{strategy}'."
 
 
-def remove_outliers(dataset_id: str, column: str, method: str = "iqr") -> dict:
-    """
-    Remove rows where `column` value is an outlier.
-    method: 'iqr' | 'zscore'
-    """
-    df = store.get_df(dataset_id).copy()
-    if column not in df.columns:
-        return {"error": f"Column '{column}' not found."}
-    if not pd.api.types.is_numeric_dtype(df[column]):
-        return {"error": f"Column '{column}' is not numeric."}
-
-    before = len(df)
-    if method == "iqr":
-        Q1, Q3 = df[column].quantile(0.25), df[column].quantile(0.75)
-        iqr    = Q3 - Q1
-        df     = df[(df[column] >= Q1 - 1.5 * iqr) & (df[column] <= Q3 + 1.5 * iqr)]
-    elif method == "zscore":
-        z = np.abs((df[column] - df[column].mean()) / df[column].std())
-        df = df[z < 3]
-    else:
-        return {"error": f"Unknown method '{method}'."}
-
-    store.update_df(dataset_id, df)
-    return {"column": column, "method": method, "rows_before": before, "rows_after": len(df), "removed": before - len(df)}
-
-
-# ── Chart data builders ───────────────────────────────────────────
+# ── Chart data builders (used by /eda endpoint) ───────────────────
 
 def generate_bar_chart(dataset_id: str, x_col: str, y_col: str, agg: str = "mean", top_n: int = 20) -> dict:
     """Group by x_col, aggregate y_col, return bar chart JSON."""
+    from app.data import session_store as store
     df = store.get_df(dataset_id)
     for col in (x_col, y_col):
         if col not in df.columns:
             return {"error": f"Column '{col}' not found."}
-
     grouped = df.groupby(x_col)[y_col].agg(agg).reset_index().head(top_n)
     grouped.columns = [x_col, y_col]
     return {
@@ -167,11 +138,11 @@ def generate_bar_chart(dataset_id: str, x_col: str, y_col: str, agg: str = "mean
 
 def generate_line_chart(dataset_id: str, x_col: str, y_col: str) -> dict:
     """Return a line chart JSON from two columns (sorted by x)."""
+    from app.data import session_store as store
     df = store.get_df(dataset_id)
     for col in (x_col, y_col):
         if col not in df.columns:
             return {"error": f"Column '{col}' not found."}
-
     data = df[[x_col, y_col]].dropna().sort_values(x_col)
     return {
         "type":  "line",
@@ -184,21 +155,19 @@ def generate_line_chart(dataset_id: str, x_col: str, y_col: str) -> dict:
 
 def generate_histogram(dataset_id: str, column: str, bins: int = 20) -> dict:
     """Build histogram buckets for a numeric column."""
+    from app.data import session_store as store
     df = store.get_df(dataset_id)
     if column not in df.columns:
         return {"error": f"Column '{column}' not found."}
     if not pd.api.types.is_numeric_dtype(df[column]):
         return {"error": f"Column '{column}' is not numeric."}
-
-    # Drop nulls AND infinite values before histogramming
     series = df[column].dropna()
     series = series[np.isfinite(series)]
     if len(series) == 0:
         return {"error": f"Column '{column}' has no finite values."}
-
     counts, edges = np.histogram(series, bins=min(bins, len(series)))
     data = [
-        {"bin": f"{edges[i]:.2f}–{edges[i+1]:.2f}", "count": int(counts[i])}
+        {"bin": f"{edges[i]:.2f}\u2013{edges[i+1]:.2f}", "count": int(counts[i])}
         for i in range(len(counts))
     ]
     return {
@@ -212,15 +181,14 @@ def generate_histogram(dataset_id: str, column: str, bins: int = 20) -> dict:
 
 def generate_scatter_chart(dataset_id: str, x_col: str, y_col: str, sample: int = 500) -> dict:
     """Return a scatter chart JSON (sampled to avoid huge payloads)."""
+    from app.data import session_store as store
     df = store.get_df(dataset_id)
     for col in (x_col, y_col):
         if col not in df.columns:
             return {"error": f"Column '{col}' not found."}
-
     subset = df[[x_col, y_col]].dropna()
     if len(subset) == 0:
         return {"error": f"No non-null rows for columns '{x_col}' and '{y_col}'."}
-
     n = min(sample, len(subset))
     data = subset.sample(n, random_state=42).to_dict(orient="records")
     return {

@@ -53,11 +53,14 @@ def execute_sql(query: str) -> dict[str, Any]:
         except Exception:
             pass
 
-        # Register as table_1, table_2 / df1, df2
+        # Register as table_1, table_2 / df1, df2, and 'df' for primary
         alias = f"df{table_index}"
         try:
             df.to_sql(alias, conn, index=False, if_exists="replace")
             table_mapping[alias] = ds_id
+            if table_index == 1 or "df" not in table_mapping:
+                df.to_sql("df", conn, index=False, if_exists="replace")
+                table_mapping["df"] = ds_id
         except Exception:
             pass
         

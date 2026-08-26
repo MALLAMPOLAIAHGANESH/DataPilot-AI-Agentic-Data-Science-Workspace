@@ -1,76 +1,140 @@
-import pandas as pd
-import io
-from typing import Dict, Any, Tuple
+"""
+data/processing.py — DataFrame utilities (session-aware)
+=========================================================
+All read/writes now go through get_current_session() so every
+student's DataFrame is isolated from every other student's.
 
-# ==========================================
-# 1. In-Memory State Management
-# ==========================================
-# For a production app, you would use Redis or a Database with session IDs.
-# For this architecture, we use a simple dictionary to hold the active DataFrame.
-DATA_STORE: Dict[str, Any] = {"df": None}
+DATA_STORE is kept as a backwards-compatible property so that
+dataset_tools.py (which imports it as a dict) still works.
+"""
+from __future__ import annotations
+
+import io
+from typing import Any, Dict, Tuple
+
+import pandas as pd
+
+from app.data.session_store import get_current_session
+
+
+# ── Backwards-compatible DATA_STORE shim ─────────────────────────
+# dataset_tools.py does:  from app.data.processing import DATA_STORE
+# and then:               DATA_STORE.get("df") / DATA_STORE["df"] = ...
+# This proxy delegates every operation to the current session.
+
+class _DataStoreFacade:
+    """Makes DATA_STORE["df"] transparently read/write the per-session sandbox."""
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return get_current_session().get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return get_current_session()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        get_current_session()[key] = value
+
+    def __contains__(self, key: str) -> bool:
+        return key in get_current_session()
+
+
+DATA_STORE = _DataStoreFacade()
+
+
+# ── Core helpers ──────────────────────────────────────────────────
+
+def get_active_dataframe() -> pd.DataFrame | None:
+    """Return the current session's active DataFrame."""
+    return get_current_session().get("df")
+
 
 def load_dataframe(file_contents: bytes) -> None:
-    """Reads raw CSV bytes and stores them in the global state."""
+    """Read raw CSV bytes and store in the current session."""
     df = pd.read_csv(io.BytesIO(file_contents))
-    DATA_STORE["df"] = df
+    get_current_session()["df"] = df
 
-def get_active_dataframe() -> pd.DataFrame:
-    """Safely retrieves the current DataFrame."""
-    return DATA_STORE["df"]
 
-# ==========================================
-# 2. UI Extraction Functions
-# ==========================================
+# ── UI Extraction ─────────────────────────────────────────────────
+
 def get_schema_and_preview() -> Tuple[list, list, int]:
-    """Extracts the exact data shapes required by our Pydantic UploadResponse schema."""
-    df = DATA_STORE["df"]
+    """Return (schema, preview_rows, row_count) for the active DataFrame."""
+    df = get_current_session().get("df")
     if df is None:
-        raise ValueError("No dataframe loaded.")
+        raise ValueError("No dataframe loaded in this session.")
 
-    # 1. Build the schema list
-    schema = [{"column": col, "type": str(dtype)} for col, dtype in df.dtypes.items()]
-    
-    # 2. Get the first 5 rows and replace NaNs with empty strings for JSON compatibility
+    schema  = [{"column": col, "type": str(dtype)} for col, dtype in df.dtypes.items()]
     preview = df.head(5).fillna("").to_dict(orient="records")
-    
-    # 3. Get total row count
-    rows = len(df)
-    
-    return schema, preview, rows
+    return schema, preview, len(df)
 
-# ==========================================
-# 3. LLM Context Functions
-# ==========================================
+
+# ── LLM Context ───────────────────────────────────────────────────
+
 def get_metadata_for_llm() -> str:
-    """Generates a text summary of the dataframe for Gemini's system prompt."""
-    df = DATA_STORE["df"]
+    """Return a text summary of the active DataFrame for Gemini's system prompt."""
+    df = get_current_session().get("df")
     if df is None:
         return "No data loaded."
-        
-    buffer = io.StringIO()
-    df.info(buf=buffer)
-    info_str = buffer.getvalue()
-    
-    missing_values = df.isnull().sum().to_dict()
-    
-    return f"DataFrame Info:\n{info_str}\n\nMissing Values:\n{missing_values}"
 
-# ==========================================
-# 4. Code Execution Engine
-# ==========================================
+    buf = io.StringIO()
+    df.info(buf=buf)
+    return (
+        f"DataFrame Info:\n{buf.getvalue()}\n\n"
+        f"Missing Values:\n{df.isnull().sum().to_dict()}"
+    )
+
+
+# ── Code Execution Engine ─────────────────────────────────────────
+
 def execute_pandas_code(code_string: str) -> Dict[str, Any]:
     """
-    Safely executes AI-generated Pandas code.
-    Returns the 'chart_data' dictionary if the AI created one.
+    Execute AI-generated Pandas code in an isolated namespace.
+    Persists any mutations back into the current session's DataFrame.
     """
-    df = DATA_STORE["df"]
-    
-    # We add a chart_data variable to our sandbox environment
+    session = get_current_session()
+    df = session.get("df")
     local_env = {"df": df, "pd": pd, "chart_data": None}
-    
-    exec(code_string, local_env)
-    
-    DATA_STORE["df"] = local_env["df"]
-    
-    # Return the extracted chart data
+    exec(code_string, local_env)  # nosec — internal only
+    session["df"] = local_env["df"]
     return local_env.get("chart_data")
+
+
+# ── EDA Profile ───────────────────────────────────────────────────
+
+def generate_eda_profile() -> dict:
+    """Calculate automated dataset statistics for the UI."""
+    df = get_current_session().get("df")
+    if df is None:
+        return {}
+
+    total_rows  = len(df)
+    total_cols  = len(df.columns)
+    missing_cells = int(df.isna().sum().sum())
+    total_cells   = total_rows * total_cols
+    missing_pct   = round((missing_cells / total_cells) * 100, 1) if total_cells > 0 else 0
+
+    return {
+        "rows":             total_rows,
+        "columns":          total_cols,
+        "missing_pct":      missing_pct,
+        "numeric_cols":     len(df.select_dtypes(include=["number"]).columns),
+        "categorical_cols": len(df.select_dtypes(include=["object", "category"]).columns),
+    }
+
+
+# ── Cleaning Helpers ──────────────────────────────────────────────
+
+def handle_missing_values(strategy: str = "drop") -> str:
+    """Drop or fill missing values across the entire active DataFrame."""
+    session = get_current_session()
+    df = session.get("df")
+    if df is None:
+        return "Error: No dataset loaded."
+
+    if strategy == "drop":
+        session["df"] = df.dropna()
+        return "Successfully dropped all rows containing missing values."
+    elif strategy == "fill":
+        session["df"] = df.fillna(0)
+        return "Successfully filled all missing values with zeros."
+    else:
+        return f"Error: Unknown strategy '{strategy}'."
